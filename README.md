@@ -1,4 +1,4 @@
-<h1 align="center">Jarvis</h1>
+<h1 align="center">Mek</h1>
 
 <p align="center">
   Apple Silicon Mac'i kendi kendine en hızlı, en sağlıklı, en temiz ve en güvenli hâlde tutan; gün içinde
@@ -10,8 +10,8 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.3:** Bu sürümde Jarvis sizi dinlemez, yalnızca kendisi konuşur. Mikrofon hiç açılmaz.
-> Sesle yönetilen asistan ve kurgu otomasyonu içeren **Mek** sürümü [`v0.0.0.2`](https://github.com/AlptugDag/Mac-Cleaner/tree/v0.0.0.2)
+> **v0.0.0.3:** Bu sürümde Mek sizi dinlemez, yalnızca kendisi konuşur. Mikrofon hiç açılmaz.
+> Sesle yönetilen asistan ve kurgu otomasyonu içeren önceki Mek sürümü [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2)
 > etiketinde duruyor.
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
@@ -21,7 +21,7 @@ weather, system). Text is phrased on-device by Apple Intelligence (FoundationMod
 ---
 
 ## Konuştukları
-Jarvis aşağıdaki durumlarda kendiliğinden konuşur:
+Mek aşağıdaki durumlarda kendiliğinden konuşur:
 - **Günün ilk brifingi:** masaya oturduğunuzda saat, hava, takvim, anımsatıcılar, piyasa özeti ve sistem durumu
 - **Takvim:** etkinliklerden 10 dakika önce hatırlatma
 - **Piyasalar (hafta içi):** BIST 100, dolar, euro, gram altın, Bitcoin ve izleme listenizde belirgin bir hareket olduğunda haber verir, 18:15'te kapanış özeti okur. Alım-satım yapmaz, tavsiye vermez.
@@ -65,12 +65,15 @@ Eski kurulum dosyaları ve aylardır açılmamış büyük dosyalar silinmez, ya
 - **Kripto madenciler:** İmza, komut satırı ya da havuz bağlantısıyla tespit edilir. Süreç durdurulur, dosyası ve onu başlatan ajan karantinaya alınır.
 - **Başlangıç öğeleri:** Yeni eklenenler 15 dakikada bir denetlenir. İmzasız ve şüpheli konumdan çalışan bir öğe devre dışı bırakılır.
 - **Dosya taraması:** ClamAV, siz bilgisayar başında değilken yeni indirmeleri en düşük öncelikte tarar; virüs veritabanı günde bir kez güncellenir.
-- **Güvenlik ayarları:** SIP, Gatekeeper, FileVault, güvenlik duvarı ve XProtect izlenir. Jarvis bu ayarları değiştirmez, kapanırsa size söyler.
+- **Güvenlik ayarları:** SIP, Gatekeeper, FileVault, güvenlik duvarı ve XProtect izlenir. Mek bu ayarları değiştirmez, kapanırsa size söyler.
 - Hiçbir dosya silinmez. Şüpheli dosyalar `~/.jarvis/karantina` klasörüne taşınır.
 
 ## Kurulum
+
+Terminal komutu ve kurulum klasörü teknik nedenlerle `jarvis` / `~/.jarvis` adını taşır.
+
 ```bash
-git clone https://github.com/AlptugDag/Mac-Cleaner.git && cd Mac-Cleaner
+git clone https://github.com/AlptugDag/Mek.git && cd Mek
 ./install.sh
 sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem temizliği (sabit komutlar)
 ```
@@ -85,7 +88,7 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 - `jarvis sus 60`: 60 dakika sessiz kalır
 - `jarvis log`: kayıtları izler
 
-**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `jarvis brifing` yazın, Siri'ye "Jarvis brifing" deyin.
+**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `jarvis brifing` yazın, Siri'ye "Mek brifing" deyin.
 
 ## Yapı
 ```
