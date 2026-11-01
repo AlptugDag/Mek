@@ -1,0 +1,14 @@
+#!/bin/bash
+# Gemini API anahtarını Mek ayarlarına güvenle kaydeder (ekrana yazılmaz).
+read -rs -p "Gemini API anahtarı: " KEY; echo
+CFG="$HOME/.jarvis/mek.json"
+/usr/bin/python3 - "$CFG" "$KEY" <<'PY'
+import json, sys, os
+p, k = sys.argv[1], sys.argv[2]
+d = json.load(open(p)) if os.path.exists(p) else {}
+d["gemini_api_key"] = k
+json.dump(d, open(p, "w"), ensure_ascii=False, indent=2)
+os.chmod(p, 0o600)
+PY
+launchctl kickstart -k gui/$(id -u)/com.alptug.mek 2>/dev/null
+echo "Kaydedildi, Mek yeniden başlatıldı."

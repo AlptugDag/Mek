@@ -1,0 +1,10 @@
+numpy>=2.0
+scipy>=1.13
+sounddevice>=0.5
+psutil>=7.0
+mlx>=0.32
+mlx-lm>=0.32
+mlx-whisper>=0.4.3
+pyobjc-framework-Cocoa>=13.0
+pyobjc-framework-Quartz>=13.0
+ema-lightning>=1.0.1

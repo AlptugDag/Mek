@@ -1,0 +1,11 @@
+#!/bin/bash
+# mek "Premiere'i aç"  |  mek durum  |  mek söyle "merhaba"
+SOCK="$HOME/.jarvis/mek.sock"
+case "$1" in
+  durum|status) msg="__status__";;
+  söyle|say) shift; msg="__say__ $*";;
+  log) exec tail -f "$HOME/.jarvis/mek.log";;
+  restart) launchctl kickstart -k gui/$(id -u)/com.alptug.mek; exit;;
+  *) msg="$*";;
+esac
+printf '%s' "$msg" | nc -U -w 3 "$SOCK"; echo

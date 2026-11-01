@@ -1,135 +1,150 @@
-<p align="center">
-  <img src="assets/icon.png" width="160" alt="Mac-Cleaner Liquid Glass Icon" style="border-radius: 34px;">
-</p>
-
-<h1 align="center">mac-cleaner</h1>
+<h1 align="center">Mek</h1>
 
 <p align="center">
-  A zero-dependency bash script and one-click macOS Automator app that deep-cleans every cache, log, messaging media dump, and "System Data" junk folder your Mac accumulates — with special focus on Adobe Creative Cloud, video editors, and bloated communication apps.
+  Kurgucular ve seslendirme sanatçıları için Apple Silicon Mac'te sürekli çalışan, sesle yönetilen akıllı asistan:
+  sistem bakımı, performans profilleri, Premiere Pro ve DaVinci Resolve için kurgu otomasyonu.
   <br><br>
-  <img src="https://img.shields.io/badge/macOS-12%2B-black" alt="macOS 12+">
-  <img src="https://img.shields.io/badge/shell-bash-blue" alt="bash">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/version-0.0.0.2-orange" alt="v0.0.0.2">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/safe-local_cache_only-brightgreen" alt="Safe: Local Cache Only">
 </p>
 
----
+> **v0.0.0.2:** Bu sürüm, önceki tek betiklik `mac-cleaner`'ın yerini alır. Temizleyici artık Mek'in bir parçası
+> (`bin/smart_system_cleaner.sh`) ve Mek tarafından uygun zamanda kendiliğinden çalıştırılır.
+> Eski sürüm git geçmişinde duruyor.
 
-## Why mac-cleaner?
-
-Ever opened **System Settings → General → Storage** only to find that **"System Data" (Sistem Verileri)** is hogging 50GB to 150GB+ of your SSD with no built-in way to see or clear what's inside?
-
-Finder lumps everything it doesn't consider standard user documents or photos into "System Data":
-- Huge media caches from video & audio suites (Adobe Premiere, After Effects, DaVinci Resolve)
-- Gigabytes of cached images, videos, and voice messages from **WhatsApp, Telegram, and Discord**
-- Hidden system temporary folders in `/private/var/folders` that macOS forgets to sweep
-- Build caches and toolchains from developer tools & package managers (Homebrew, npm, pip, Xcode)
-
-`mac-cleaner` hunts down these hidden disk hogs and reclaims your SSD in seconds.
+*English summary: Mek is an always-on, voice-controlled Turkish assistant daemon for video editors on Apple Silicon.
+It replaces separate cron-style scripts with one event-driven service: dynamic performance profiles, idle-time
+cleaning, process health, and editing automation (silence removal, retake cleanup, hooks, audio/video effects,
+captions, LUT grading) that exports FCP7 XML for both Premiere Pro and DaVinci Resolve.*
 
 ---
 
-## What It Cleans
+## Ne yapar?
 
-### 1. 💬 Messaging & Social Apps (Local Caches Only)
-> **Safe guarantee:** This **only** deletes temporary media caches stored on your Mac. It **never** touches your chat histories or deletes media from your phone / cloud servers. Next time you view older media on WhatsApp or Telegram, it will simply re-download on demand.
+### Sesle kontrol
+- **"Mek"** dediğinizde uyanır. "Mek" kelimesi, sizin sesinizden çıkarılan kişisel şablonlarla (MFCC + DTW) algılanır.
+  Bu kontrol 2 ms sürer, kısa kelimelerde Whisper'ın uydurduğu "Altyazı M.K." gibi cümlelere de takılmaz.
+  "Mek" ile başlamayan konuşmalar yazıya dökülmez.
+- Komutlar yerelde, mlx-whisper (4-bit large-v3-turbo) ile yazıya dökülür.
+- Başka bir uygulama mikrofonu açınca (kayıt, FaceTime, Zoom, Discord) Mek kendiliğinden susar.
+- Menü çubuğunda bir durum simgesi gösterir. Duyduğu ve söylediği cümleler ekranın üstünde Siri benzeri bir balonda görünür.
 
-- **WhatsApp:** Cleans cache, temporary media downloads, and group container caches across both Mac App Store and direct Web downloads (`net.whatsapp.WhatsApp`, `desktop.WhatsApp`, and shared group containers).
-- **Telegram:** Wipes cached stickers, downloaded media (`account-*/postbox/media`), and account database caches.
-- **Discord:** Clears regular `Cache`, Chromium `Code Cache`, and accumulated crash reports (`Crashpad`).
-- **Slack:** Clears message caches and Service Worker `CacheStorage`.
-- **Spotify:** Purges bloated offline streaming cache (`PersistentCache`).
-- **Zoom & Microsoft Teams:** Purges diagnostic logs, support dump folders, and temporary blob storage.
+### Sohbet ve hafıza
+- Sohbet geçmişi ve sizinle ilgili öğrendikleri (`state/history.json`, `state/memory.json`) yeniden başlatmada kaybolmaz.
+- Cevap verdikten sonraki 8 saniye boyunca "Mek" demeden konuşmaya devam edebilirsiniz.
+- Beyin: yerel Qwen3-4B (yalnızca gerektiğinde yüklenir, 90 saniye kullanılmazsa bellekten atılır; kurgu programı
+  açıkken hiç yüklenmez). Gemini ise yalnızca internet araması ve "ekrana bak" için kullanılır, günlük kotayla sınırlıdır.
 
----
+### Komut örnekleri
+| Söyleyin | Ne olur |
+|---|---|
+| Mek, Safari'yi aç / Topaz'ı kapat | Uygulamayı açar ya da kapatır |
+| Mek, 15 dk sonra bilgisayarı kapat | İptal edilebilir zamanlayıcı kurar ("Mek iptal") |
+| Mek, kapan | 20 saniyelik geri sayımla kapatır ("dur" diyerek iptal edilir) |
+| Mek, babamı ara | Rehberde bulur, iPhone üzerinden arar |
+| Mek, bilgisayarı temizle | Temizliği başlatır, bitince kaç GB açıldığını söyler |
+| Mek, yarım saat sonra su iç | Hatırlatma kurar |
+| Mek, dolar bugün kaç lira? | Google'da arar (Gemini) |
+| Mek, ekrana bak, bu efekti nasıl yaparım? | Ekran görüntüsünü yorumlar |
+| Mek, kayıt modu | Kayıt bitene kadar susar |
 
-### 2. 🖥️ macOS "System Data" & OS-Level Cleanup
-- **`/private/var/folders` Temporary Files:** macOS holds onto user temp and cache directories for weeks on machines that sleep instead of rebooting. Scans and prunes files older than 3 days.
-- **Deep User & System Logs:** Empties `~/Library/Logs/*` and user application error archives.
-- **System Caches:** Wipes user-level cache repositories in `~/Library/Caches/*`.
-- **Trash Bin:** Triggers native Finder AppleScript cleanup across all connected internal and external APFS volumes.
+### Sistem sağlığı ve performans
+- **Performans profili:** Premiere, After Effects, Resolve, Topaz ya da Media Encoder açıldığında devreye girer.
+  - Kurgu uygulamalarını en yüksek önceliğe (QoS) alır.
+  - Bulut eşitleme, güncelleyici ve indeksleme gibi arka plan süreçlerini verimlilik çekirdeklerine alır.
+  - Gereksiz ajanları geçici olarak durdurur ve uykuyu engeller.
+  - Uygulamalar kapanınca her şeyi eski haline döndürür.
+- **Kaçak süreçler:** Kurgu programı olmayan bir süreç işlemciyi uzun süre yorarsa onu verimlilik çekirdeklerine alır ve size söyler.
+- **Takip:** ısı, disk doluluğu, disk sağlığı (SMART) ve takas alanı.
+- **Bakım:** Temizliği yalnızca siz bilgisayar başında değilken ve render sürmüyorken yapar.
+- **Kendi yükü:** boşta yaklaşık 0,3–1 GB bellek kullanır. Siz bilgisayar başında değilken kontrolleri seyrekleştirir.
 
----
+### Kurgu otomasyonu (Premiere Pro ve DaVinci Resolve)
+Komutlar üst üste eklenir. Her komut `~/Movies/Mek/<ad>/vN.xml` olarak yeni bir sürüm üretir. "Kurguyu geri al" bir önceki sürüme döner.
 
-### 3. 🎨 Adobe Creative Cloud & Post-Production Suites
-Targets all installed versions of Adobe applications dynamically using recursive directory matching:
-
-- **Shared Media Caches:** Empties `Common/Media Cache Files`, `Common/Media Cache`, `Common/Peak Files`, `Common/PTX`, and `Common/Cache`.
-- **Premiere Pro:** Deletes project-level media cache files inside `~/Documents/Adobe/Premiere Pro/*/Profile-*/`.
-- **After Effects:** Cleans Disk Cache, preview renders, and temporary composition files.
-- **Photoshop:** Purges AutoRecover scratch state and temporary work files.
-- **Lightroom Classic & CC:** Wipes preview catalog files (`*.lrdata`) and sync caches.
-- **Audition:** Empties peak files and autosave directories.
-- **InDesign:** Removes orphaned `InDesign Recovery` files.
-- **Media Encoder:** Clears Surround cache and render log history.
-- **Substance 3D Suite:** Cleans Painter, Designer, Sampler, and Stager cache & temp folders.
-- **Camera Raw & Bridge:** Empties full RAW image cache and thumbnail libraries.
-- **Creative Cloud Desktop:** Clears CoreSync, OOBE, and UPI runtime cache files.
-- **DaVinci Resolve:** Clears `CacheClip`, gallery stills (`.gallery`), and application render cache.
-
----
-
-### 4. 🛠️ Package Managers & Developer Stores
-Where tools provide built-in safe cleanup routines, `mac-cleaner` calls them natively to maintain registry integrity:
-
-- **Homebrew:** `brew cleanup -s` and `brew autoremove`
-- **Node.js:** `npm cache clean --force`, `pnpm store prune`, `yarn cache clean`
-- **Python:** `pip3 cache purge`, `uv cache clean`
-- **Apple / iOS:** Xcode `DerivedData`, `iOS/watchOS/tvOS DeviceSupport` symbol caches, CoreSimulator caches, and uninstalled simulator cleanup (`xcrun simctl delete unavailable`)
-- **Other Stores:** Gradle (`~/.gradle/caches`), Cargo registry caches, CocoaPods, SwiftPM, Go build cache, Cypress, and Playwright browsers
-
----
-
-### 5. 🌐 Web Browsers
-- **Safari:** Cleans `com.apple.Safari` browser caches.
-- **Google Chrome & Edge:** Clears `Default/Cache` and `Media Cache`.
-- **Firefox:** Wipes `cache2` disk storage across all user profiles.
-
----
-
-## Installation & Usage
-
-### 1. Terminal (via Make)
-```bash
-git clone https://github.com/AlptugDag/Mac-Cleaner.git
-cd Mac-Cleaner
-sudo make install
 ```
-You can now run the tool from anywhere using:
-```bash
-mac-cleaner            # dry run — see what would be deleted
-mac-cleaner --yes      # actually delete
-mac-cleaner --help     # show help menu
+Mek, boşlukları kes, girişe reverb ile gir, "proxy dosyalar" dediğim yeri robot yap ve altyazı ekle
+Mek, bu videoya iyi bir hook yap
+Mek, ııı'ları ve tekrar alınan cümleleri temizle
+Mek, kaba kurgu yap, 30 saniyelik reels
+Mek, renkleri sinematik yap … biraz daha sıcak … rengi sıfırla
+Mek, bu fotoğraftaki gibi renk ver        (Finder'da referans görsel seçili)
+Mek, "lanet" kelimesini sansürle
 ```
-*(If you prefer not to install it globally, you can just run `./clean.sh` from the folder).*
 
-### 2. One-click Automator App
+- **Ses efektleri:** reverb, reverb ile giriş, yankı, robot, telefon, radyo, megafon, su altı, kalın ses, ince ses,
+  şeytan sesi, ters çalma, yayın kalitesinde temizlik (−14 LUFS), normalize, susturma
+- **Görüntü efektleri:** punch-in, zoom, ağır çekim, hızlandırma, siyah-beyaz, flaş, titreme, glitch, vinyet, kare dondurma
+- **Efekt sesleri:** whoosh, riser, impact, bip. Hepsi matematiksel olarak üretilir, telif sorunu yoktur.
+- **Hedefleme:** "girişe", "son cümleye", "ilk 3 saniyeye", "'X' dediğim yere", "tamamına"
+- **Hook:** transkripti, ses enerjisini ve sahne değişimlerini analiz eder. En çarpıcı cümleyi başa koyar, efektleri seçer ve "HOOK" işaretçisi ekler.
+- **Renk:** 33'lük `.cube` LUT üretir.
+  - Premiere'de: Lumetri › Yaratıcı › Görünüm
+  - Resolve'da: kliplere kendiliğinden uygulanır
 
-The repo includes a ready-to-use macOS Automator application in `MacCleaner.app`.
-Double-click it from Finder — it will:
+**İki programda da aynı sonuç nasıl alınıyor?** Premiere ve Resolve birbirinin efekt ayarlarını XML'den okuyamaz.
+Bu yüzden efekt uygulanan parçalar, Apple Silicon'un donanımsal ProRes kodlayıcısıyla ayrı klip olarak işlenip
+zaman çizelgesine konur. Orijinal dosyalara hiç dokunulmaz.
+- **Resolve:** Harici betik ayarı açıksa (Tercihler › Sistem › Genel › Harici betik kullanımı: Yerel) Mek, mevcut
+  zaman çizelgesindeki V1 kesimlerini okur ve sonucu yeni bir zaman çizelgesi olarak ekler.
+- **Premiere:** Programın dışından zaman çizelgesi okunamaz. Mek ham dosyadan ya da kendi son sürümünden çalışır ve
+  sonucu yeni bir sekans olarak içe aktarır.
 
-1. Show a start notification immediately.
-2. Run the full clean in the background.
-3. Show a completion notification when done.
-
-#### Optional: Full Disk Access (recommended)
-
-macOS silently blocks access to `Trash`, `Mail`, `Messages` and other sandboxed folders without this grant.
-
-1. **Apple menu → System Settings → Privacy & Security → Full Disk Access**
-2. Click `+` and add **MacCleaner.app** (or your Terminal app).
-3. Toggle it on. macOS will quit the app — reopen it afterwards.
-
----
-
-## Safety & Design Philosophy
-
-- **Zero External Dependencies:** Runs entirely on stock macOS bash, standard UNIX utilities (`find`, `awk`, `rm`), and AppleScript.
-- **Dry-Run by Default:** Calling `./clean.sh` without flags will never delete a single byte.
-- **Preserves Your Data:** Never touches projects, documents, photo libraries, or chat histories.
+**Kurgu yardımı (API harcamadan):** Premiere, Resolve, After Effects ya da Photoshop öndeyken "kes", "render al",
+"işaretçi ekle", "katmanı kopyala" gibi komutları doğrudan o programın kısayoluna çevirir.
 
 ---
 
-## License
+## Kurulum
 
-MIT License — feel free to fork, customize, and share!
+```bash
+brew install ffmpeg
+git clone https://github.com/AlptugDag/Mac-Cleaner.git && cd Mac-Cleaner
+./install.sh
+```
+
+İsteğe bağlı adımlar:
+```bash
+mek-anahtar                                                  # Gemini anahtarı (gösterilmeden kaydedilir)
+~/.jarvis/venv/bin/python ~/.jarvis/mek/wakeword.py ekle ~/Desktop/mek.wav   # 8-10 kez "Mek" dediğiniz kayıt
+sudo bash ~/.jarvis/mek/install_privileged.sh                # güç profili + sistem servisleri (yalnızca sabit komutlar)
+```
+
+**Gereken macOS izinleri** (Sistem Ayarları › Gizlilik ve Güvenlik):
+- **Mikrofon**
+- **Erişilebilirlik:** kısayol göndermek için
+- **Ekran Kaydı:** "ekrana bak" için
+- **Kişiler:** "… ara" için
+
+**Terminal komutları:**
+- `mek "metin"`: komut gönderir
+- `mek durum`: anlık durumu gösterir
+- `mek log`: kayıtları izler
+- `mek restart`: Mek'i yeniden başlatır
+
+Kaldırmak için `./uninstall.sh` çalıştırın. Mek durur, eski ajanlar geri yüklenir. Hiçbir dosyanız silinmez.
+
+## Yapı
+```
+mek/mekd.py        ana servis: komutlar, bağlam, proaktif öneriler, sağlık
+mek/voice.py       mikrofon, VAD, Whisper, EMA Lightning TTS
+mek/wakeword.py    kişisel "Mek" algılayıcı (MFCC + DTW)
+mek/brain.py       yerel/Gemini/Claude beyni, hafıza, önbellek, günlük kota
+mek/context.py     ön plandaki uygulama, boşta kalma süresi, GPU, render takibi, mikrofon kullanımı, ısı
+mek/services.py    performans profilleri, QoS, ajan yönetimi, temizlik
+mek/editkit.py     medya analizi, transkript, FCP7 XML, LUT, Resolve API
+mek/editfx.py      kurgu durumu, efektler, hook, alt yazı, komut ayrıştırıcı
+mek/apphelp.py     kurgu uygulaması kısayolları
+mek/menubar.py     menü çubuğu simgesi + ekran balonu
+bin/               mek CLI, anahtar kaydı, temizleyici, iş istasyonu ayarları
+```
+
+## Gizlilik
+- Ses yalnızca bilgisayarınızda işlenir.
+- Gemini'ye yalnızca açıkça istediğiniz aramalar, ekran görüntüleri ve (kota varsa) kurgu planları gider.
+- API anahtarı, sohbet geçmişi, hafıza ve ses şablonlarınız `~/.jarvis` altında kalır ve bu depoya girmez.
+
+## Lisans
+MIT
