@@ -1,150 +1,103 @@
-<h1 align="center">Mek</h1>
+<h1 align="center">Jarvis</h1>
 
 <p align="center">
-  Kurgucular ve seslendirme sanatçıları için Apple Silicon Mac'te sürekli çalışan, sesle yönetilen akıllı asistan:
-  sistem bakımı, performans profilleri, Premiere Pro ve DaVinci Resolve için kurgu otomasyonu.
+  Apple Silicon Mac'i kendi kendine en hızlı, en sağlıklı, en temiz ve en güvenli hâlde tutan; gün içinde
+  takvimden, piyasalardan ve havadan haber veren arka plan asistanı. Apple Intelligence ile çalışır.
   <br><br>
-  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.2-orange" alt="v0.0.0.2">
+  <img src="https://img.shields.io/badge/version-0.0.0.3-orange" alt="v0.0.0.3">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.2:** Bu sürüm, önceki tek betiklik `mac-cleaner`'ın yerini alır. Temizleyici artık Mek'in bir parçası
-> (`bin/smart_system_cleaner.sh`) ve Mek tarafından uygun zamanda kendiliğinden çalıştırılır.
-> Eski sürüm git geçmişinde duruyor.
+> **v0.0.0.3:** Bu sürümde Jarvis sizi dinlemez, yalnızca kendisi konuşur. Mikrofon hiç açılmaz.
+> Sesle yönetilen asistan ve kurgu otomasyonu içeren **Mek** sürümü [`v0.0.0.2`](https://github.com/AlptugDag/Mac-Cleaner/tree/v0.0.0.2)
+> etiketinde duruyor.
 
-*English summary: Mek is an always-on, voice-controlled Turkish assistant daemon for video editors on Apple Silicon.
-It replaces separate cron-style scripts with one event-driven service: dynamic performance profiles, idle-time
-cleaning, process health, and editing automation (silence removal, retake cleanup, hooks, audio/video effects,
-captions, LUT grading) that exports FCP7 XML for both Premiere Pro and DaVinci Resolve.*
-
----
-
-## Ne yapar?
-
-### Sesle kontrol
-- **"Mek"** dediğinizde uyanır. "Mek" kelimesi, sizin sesinizden çıkarılan kişisel şablonlarla (MFCC + DTW) algılanır.
-  Bu kontrol 2 ms sürer, kısa kelimelerde Whisper'ın uydurduğu "Altyazı M.K." gibi cümlelere de takılmaz.
-  "Mek" ile başlamayan konuşmalar yazıya dökülmez.
-- Komutlar yerelde, mlx-whisper (4-bit large-v3-turbo) ile yazıya dökülür.
-- Başka bir uygulama mikrofonu açınca (kayıt, FaceTime, Zoom, Discord) Mek kendiliğinden susar.
-- Menü çubuğunda bir durum simgesi gösterir. Duyduğu ve söylediği cümleler ekranın üstünde Siri benzeri bir balonda görünür.
-
-### Sohbet ve hafıza
-- Sohbet geçmişi ve sizinle ilgili öğrendikleri (`state/history.json`, `state/memory.json`) yeniden başlatmada kaybolmaz.
-- Cevap verdikten sonraki 8 saniye boyunca "Mek" demeden konuşmaya devam edebilirsiniz.
-- Beyin: yerel Qwen3-4B (yalnızca gerektiğinde yüklenir, 90 saniye kullanılmazsa bellekten atılır; kurgu programı
-  açıkken hiç yüklenmez). Gemini ise yalnızca internet araması ve "ekrana bak" için kullanılır, günlük kotayla sınırlıdır.
-
-### Komut örnekleri
-| Söyleyin | Ne olur |
-|---|---|
-| Mek, Safari'yi aç / Topaz'ı kapat | Uygulamayı açar ya da kapatır |
-| Mek, 15 dk sonra bilgisayarı kapat | İptal edilebilir zamanlayıcı kurar ("Mek iptal") |
-| Mek, kapan | 20 saniyelik geri sayımla kapatır ("dur" diyerek iptal edilir) |
-| Mek, babamı ara | Rehberde bulur, iPhone üzerinden arar |
-| Mek, bilgisayarı temizle | Temizliği başlatır, bitince kaç GB açıldığını söyler |
-| Mek, yarım saat sonra su iç | Hatırlatma kurar |
-| Mek, dolar bugün kaç lira? | Google'da arar (Gemini) |
-| Mek, ekrana bak, bu efekti nasıl yaparım? | Ekran görüntüsünü yorumlar |
-| Mek, kayıt modu | Kayıt bitene kadar susar |
-
-### Sistem sağlığı ve performans
-- **Performans profili:** Premiere, After Effects, Resolve, Topaz ya da Media Encoder açıldığında devreye girer.
-  - Kurgu uygulamalarını en yüksek önceliğe (QoS) alır.
-  - Bulut eşitleme, güncelleyici ve indeksleme gibi arka plan süreçlerini verimlilik çekirdeklerine alır.
-  - Gereksiz ajanları geçici olarak durdurur ve uykuyu engeller.
-  - Uygulamalar kapanınca her şeyi eski haline döndürür.
-- **Kaçak süreçler:** Kurgu programı olmayan bir süreç işlemciyi uzun süre yorarsa onu verimlilik çekirdeklerine alır ve size söyler.
-- **Takip:** ısı, disk doluluğu, disk sağlığı (SMART) ve takas alanı.
-- **Bakım:** Temizliği yalnızca siz bilgisayar başında değilken ve render sürmüyorken yapar.
-- **Kendi yükü:** boşta yaklaşık 0,3–1 GB bellek kullanır. Siz bilgisayar başında değilken kontrolleri seyrekleştirir.
-
-### Kurgu otomasyonu (Premiere Pro ve DaVinci Resolve)
-Komutlar üst üste eklenir. Her komut `~/Movies/Mek/<ad>/vN.xml` olarak yeni bir sürüm üretir. "Kurguyu geri al" bir önceki sürüme döner.
-
-```
-Mek, boşlukları kes, girişe reverb ile gir, "proxy dosyalar" dediğim yeri robot yap ve altyazı ekle
-Mek, bu videoya iyi bir hook yap
-Mek, ııı'ları ve tekrar alınan cümleleri temizle
-Mek, kaba kurgu yap, 30 saniyelik reels
-Mek, renkleri sinematik yap … biraz daha sıcak … rengi sıfırla
-Mek, bu fotoğraftaki gibi renk ver        (Finder'da referans görsel seçili)
-Mek, "lanet" kelimesini sansürle
-```
-
-- **Ses efektleri:** reverb, reverb ile giriş, yankı, robot, telefon, radyo, megafon, su altı, kalın ses, ince ses,
-  şeytan sesi, ters çalma, yayın kalitesinde temizlik (−14 LUFS), normalize, susturma
-- **Görüntü efektleri:** punch-in, zoom, ağır çekim, hızlandırma, siyah-beyaz, flaş, titreme, glitch, vinyet, kare dondurma
-- **Efekt sesleri:** whoosh, riser, impact, bip. Hepsi matematiksel olarak üretilir, telif sorunu yoktur.
-- **Hedefleme:** "girişe", "son cümleye", "ilk 3 saniyeye", "'X' dediğim yere", "tamamına"
-- **Hook:** transkripti, ses enerjisini ve sahne değişimlerini analiz eder. En çarpıcı cümleyi başa koyar, efektleri seçer ve "HOOK" işaretçisi ekler.
-- **Renk:** 33'lük `.cube` LUT üretir.
-  - Premiere'de: Lumetri › Yaratıcı › Görünüm
-  - Resolve'da: kliplere kendiliğinden uygulanır
-
-**İki programda da aynı sonuç nasıl alınıyor?** Premiere ve Resolve birbirinin efekt ayarlarını XML'den okuyamaz.
-Bu yüzden efekt uygulanan parçalar, Apple Silicon'un donanımsal ProRes kodlayıcısıyla ayrı klip olarak işlenip
-zaman çizelgesine konur. Orijinal dosyalara hiç dokunulmaz.
-- **Resolve:** Harici betik ayarı açıksa (Tercihler › Sistem › Genel › Harici betik kullanımı: Yerel) Mek, mevcut
-  zaman çizelgesindeki V1 kesimlerini okur ve sonucu yeni bir zaman çizelgesi olarak ekler.
-- **Premiere:** Programın dışından zaman çizelgesi okunamaz. Mek ham dosyadan ya da kendi son sürümünden çalışır ve
-  sonucu yeni bir sekans olarak içe aktarır.
-
-**Kurgu yardımı (API harcamadan):** Premiere, Resolve, After Effects ya da Photoshop öndeyken "kes", "render al",
-"işaretçi ekle", "katmanı kopyala" gibi komutları doğrudan o programın kısayoluna çevirir.
+*English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
+and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
+weather, system). Text is phrased on-device by Apple Intelligence (FoundationModels). It never listens.*
 
 ---
+
+## Konuştukları
+Jarvis aşağıdaki durumlarda kendiliğinden konuşur:
+- **Günün ilk brifingi:** masaya oturduğunuzda saat, hava, takvim, anımsatıcılar, piyasa özeti ve sistem durumu
+- **Takvim:** etkinliklerden 10 dakika önce hatırlatma
+- **Piyasalar (hafta içi):** BIST 100, dolar, euro, gram altın, Bitcoin ve izleme listenizde belirgin bir hareket olduğunda haber verir, 18:15'te kapanış özeti okur. Alım-satım yapmaz, tavsiye vermez.
+- **Hava:** önümüzdeki 3 saat için yağmur uyarısı
+- **Sistem:** biten renderlar, temizlik sonuçları, disk, ısı ve takas alanı uyarıları, uzun kurgu sonrası mola önerisi
+- **Bilgisayar başında değilken:** olanları biriktirir, döndüğünüzde özetler
+
+Şu durumlarda susar (acil güvenlik uyarıları hariç):
+- 00:00–11:00 arası sessiz saatler
+- Bir uygulama mikrofonu kullanıyorken (görüşme ya da kayıt)
+- Siz bilgisayar başında değilken
+
+Söyleyeceği cümleleri **Apple Intelligence**, cihaz üzerinde doğal Türkçeye çevirir; internet ya da API anahtarı gerekmez.
+Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı bir süreçte üretilir, bu yüzden konuşma bitince bellek tamamen boşalır.
+
+## Performans
+- **Kurgu sırasında:** Premiere, After Effects, Resolve, Topaz veya Media Encoder açıldığında devreye girer.
+  - Bu uygulamaları en yüksek önceliğe alır.
+  - Bulut eşitleme, güncelleyici ve indeksleme gibi işleri verimlilik çekirdeklerine iter.
+  - Gereksiz servisleri geçici olarak durdurur, uykuyu ve Power Nap'i engeller.
+  - Uygulamalar kapanınca her şeyi eski hâline döndürür.
+- **Kaçak süreçler:** Kurgu programı olmayan bir süreç işlemciyi uzun süre yorarsa onu verimlilik çekirdeklerine alır.
+- **Kendi yükü:** yaklaşık 70–90 MB bellek. Kontrol sıklığı duruma göre değişir: kurgu sırasında 15 saniye, siz bilgisayar başındayken 10 saniye, uzaktayken 45 saniye.
+
+## Depolama temizliği
+| Katman | Ne zaman | Kapsam |
+|---|---|---|
+| Günlük | Siz bilgisayar başında değilken ve render yokken | Adobe, DaVinci, Topaz, Lightroom, Capture One önbellekleri; bütün uygulama önbellekleri (App Store uygulamaları ve Electron tabanlılar dahil); tarayıcılar; kayıtlar, çökme raporları, geçici dosyalar |
+| Haftalık | Haftada bir | Günlük katman + Homebrew, npm, pip, Xcode, Docker + sistem önbellekleri ve kayıtları + rapor |
+| Acil | Boş alan 60 GB'ın altına düşünce | Yaş eşikleri düşer, Time Machine yerel anlık görüntüleri inceltilir |
+
+**Asla silinmeyenler:**
+- DaVinci renk stilleri ve proje yedekleri
+- Son 30 günün otomatik kayıtları
+- Yapay zekâ modelleri
+- Fotoğraflar, Mail ve Mesajlar verisi
+
+Eski kurulum dosyaları ve aylardır açılmamış büyük dosyalar silinmez, yalnızca size raporlanır.
+
+## Güvenlik
+- **Kripto madenciler:** İmza, komut satırı ya da havuz bağlantısıyla tespit edilir. Süreç durdurulur, dosyası ve onu başlatan ajan karantinaya alınır.
+- **Başlangıç öğeleri:** Yeni eklenenler 15 dakikada bir denetlenir. İmzasız ve şüpheli konumdan çalışan bir öğe devre dışı bırakılır.
+- **Dosya taraması:** ClamAV, siz bilgisayar başında değilken yeni indirmeleri en düşük öncelikte tarar; virüs veritabanı günde bir kez güncellenir.
+- **Güvenlik ayarları:** SIP, Gatekeeper, FileVault, güvenlik duvarı ve XProtect izlenir. Jarvis bu ayarları değiştirmez, kapanırsa size söyler.
+- Hiçbir dosya silinmez. Şüpheli dosyalar `~/.jarvis/karantina` klasörüne taşınır.
 
 ## Kurulum
-
 ```bash
-brew install ffmpeg
 git clone https://github.com/AlptugDag/Mac-Cleaner.git && cd Mac-Cleaner
 ./install.sh
+sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem temizliği (sabit komutlar)
 ```
-
-İsteğe bağlı adımlar:
-```bash
-mek-anahtar                                                  # Gemini anahtarı (gösterilmeden kaydedilir)
-~/.jarvis/venv/bin/python ~/.jarvis/mek/wakeword.py ekle ~/Desktop/mek.wav   # 8-10 kez "Mek" dediğiniz kayıt
-sudo bash ~/.jarvis/mek/install_privileged.sh                # güç profili + sistem servisleri (yalnızca sabit komutlar)
-```
-
-**Gereken macOS izinleri** (Sistem Ayarları › Gizlilik ve Güvenlik):
-- **Mikrofon**
-- **Erişilebilirlik:** kısayol göndermek için
-- **Ekran Kaydı:** "ekrana bak" için
-- **Kişiler:** "… ara" için
+İlk çalıştırmada macOS, Takvim ve Anımsatıcılar için izin ister.
 
 **Terminal komutları:**
-- `mek "metin"`: komut gönderir
-- `mek durum`: anlık durumu gösterir
-- `mek log`: kayıtları izler
-- `mek restart`: Mek'i yeniden başlatır
+- `jarvis brifing`: brifingi hemen okur
+- `jarvis durum`: anlık sistem durumu
+- `jarvis piyasa thy`: belirli bir hissenin fiyatı
+- `jarvis güvenlik`: güvenlik özeti
+- `jarvis temizle [derin]`: temizliği elle başlatır
+- `jarvis sus 60`: 60 dakika sessiz kalır
+- `jarvis log`: kayıtları izler
 
-Kaldırmak için `./uninstall.sh` çalıştırın. Mek durur, eski ajanlar geri yüklenir. Hiçbir dosyanız silinmez.
+**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `jarvis brifing` yazın, Siri'ye "Jarvis brifing" deyin.
 
 ## Yapı
 ```
-mek/mekd.py        ana servis: komutlar, bağlam, proaktif öneriler, sağlık
-mek/voice.py       mikrofon, VAD, Whisper, EMA Lightning TTS
-mek/wakeword.py    kişisel "Mek" algılayıcı (MFCC + DTW)
-mek/brain.py       yerel/Gemini/Claude beyni, hafıza, önbellek, günlük kota
-mek/context.py     ön plandaki uygulama, boşta kalma süresi, GPU, render takibi, mikrofon kullanımı, ısı
-mek/services.py    performans profilleri, QoS, ajan yönetimi, temizlik
-mek/editkit.py     medya analizi, transkript, FCP7 XML, LUT, Resolve API
-mek/editfx.py      kurgu durumu, efektler, hook, alt yazı, komut ayrıştırıcı
-mek/apphelp.py     kurgu uygulaması kısayolları
-mek/menubar.py     menü çubuğu simgesi + ekran balonu
-bin/               mek CLI, anahtar kaydı, temizleyici, iş istasyonu ayarları
+jarvisd/jarvisd.py    ana servis: olaylar, brifing, bildirim, zamanlama
+jarvisd/services.py   performans profilleri, QoS, servis yönetimi
+jarvisd/context.py    ön plandaki uygulama, boşta kalma süresi, GPU, render takibi, ısı
+jarvisd/apple.py      Takvim/Anımsatıcılar (EventKit), piyasalar, Türkçe tarih ayrıştırma
+jarvisd/security.py   madenci, kalıcılık, ClamAV, güvenlik ayarları, karantina
+jarvisd/cleaner.py    katmanlı depolama temizliği
+ai/jarvis-ai.swift    Apple Intelligence (FoundationModels) köprüsü
+jarvis.py             ses (EMA Lightning + Mac Studio hoparlör EQ), hava durumu
 ```
-
-## Gizlilik
-- Ses yalnızca bilgisayarınızda işlenir.
-- Gemini'ye yalnızca açıkça istediğiniz aramalar, ekran görüntüleri ve (kota varsa) kurgu planları gider.
-- API anahtarı, sohbet geçmişi, hafıza ve ses şablonlarınız `~/.jarvis` altında kalır ve bu depoya girmez.
 
 ## Lisans
 MIT

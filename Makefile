@@ -4,4 +4,4 @@ install:
 uninstall:
 	./uninstall.sh
 check:
-	python3 -m py_compile mek/*.py jarvis.py && bash -n install.sh uninstall.sh bin/*.sh && echo OK
+	python3 -m py_compile jarvisd/*.py jarvis.py && bash -n install.sh uninstall.sh jarvisd/install_privileged.sh && echo OK

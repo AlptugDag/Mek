@@ -1,38 +1,23 @@
 #!/bin/bash
-# Mek kurulumu: ~/.jarvis altına kurar, eski Jarvis ajanlarını yedekleyip devre dışı bırakır.
+# Jarvis kurulumu (~/.jarvis). Eski ayrı ajanları ve Mek'i durdurur.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 J="$HOME/.jarvis"; BIN="$HOME/.local/bin"; LA="$HOME/Library/LaunchAgents"; U=$(id -u)
-
-command -v ffmpeg >/dev/null || { echo "ffmpeg gerekli:  brew install ffmpeg"; exit 1; }
-[ "$(uname -m)" = arm64 ] || { echo "Apple Silicon (M serisi) gerekli."; exit 1; }
-
-mkdir -p "$J/mek" "$J/legacy" "$J/state" "$BIN" "$LA"
-cp "$SRC"/mek/*.py "$SRC/mek/install_privileged.sh" "$J/mek/"
-[ -f "$J/jarvis.py" ] && cp "$J/jarvis.py" "$J/legacy/jarvis.py.bak"
-cp "$SRC/jarvis.py" "$J/jarvis.py"
-cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN"/mek "$BIN"/mek-anahtar "$BIN"/*.sh
-
-if [ ! -x "$J/venv/bin/python" ]; then
-  PY=$(command -v python3.11 || command -v python3)
-  "$PY" -m venv "$J/venv"
-fi
-"$J/venv/bin/pip" install -q --upgrade pip
+[ "$(uname -m)" = arm64 ] || { echo "Apple Silicon gerekli."; exit 1; }
+command -v brew >/dev/null && { brew list clamav >/dev/null 2>&1 || brew install clamav; }
+CONF=/opt/homebrew/etc/clamav/freshclam.conf
+[ -f "$CONF" ] || sed 's/^Example/#Example/' "$CONF.sample" > "$CONF"
+mkdir -p "$J/jarvisd" "$J/ai" "$J/state" "$J/legacy" "$BIN" "$LA"
+cp "$SRC"/jarvisd/* "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
+cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh"
+swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
+[ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
-
-# Eski ayrı ajanları kapat (yedekleri legacy/ altında)
-for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner; do
+for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek mek.ui; do
   launchctl bootout "gui/$U/com.alptug.$l" 2>/dev/null || true
   [ -f "$LA/com.alptug.$l.plist" ] && mv "$LA/com.alptug.$l.plist" "$J/legacy/"
 done
-
-for p in mek mek.ui; do
-  sed "s|__HOME__|$HOME|g" "$SRC/launchd/com.alptug.$p.plist" > "$LA/com.alptug.$p.plist"
-  launchctl bootout "gui/$U/com.alptug.$p" 2>/dev/null || true
-  launchctl bootstrap "gui/$U" "$LA/com.alptug.$p.plist"
-done
-
-echo "Mek kuruldu. Sonraki adımlar (isteğe bağlı):"
-echo "  mek-anahtar                                   # Gemini anahtarı (arama / ekrana bakma)"
-echo "  ~/.jarvis/venv/bin/python ~/.jarvis/mek/wakeword.py ekle kayit.wav   # 'Mek' ses şablonu"
-echo "  sudo bash ~/.jarvis/mek/install_privileged.sh # güç profili ve sistem servisleri için"
+sed "s|__HOME__|$HOME|g" "$SRC/launchd/com.alptug.jarvis.plist" > "$LA/com.alptug.jarvis.plist"
+launchctl bootout "gui/$U/com.alptug.jarvis" 2>/dev/null || true
+launchctl bootstrap "gui/$U" "$LA/com.alptug.jarvis.plist"
+echo "Jarvis kuruldu. Sistem alanı ve güç profilleri için bir kez:  sudo bash ~/.jarvis/jarvisd/install_privileged.sh"

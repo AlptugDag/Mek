@@ -1,19 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>com.alptug.mek</string>
+  <key>Label</key><string>com.alptug.jarvis</string>
   <key>ProgramArguments</key><array>
-    <string>__HOME__/.jarvis/venv/bin/python</string><string>-u</string><string>__HOME__/.jarvis/mek/mekd.py</string>
+    <string>__HOME__/.jarvis/venv/bin/python</string><string>-u</string><string>__HOME__/.jarvis/jarvisd/jarvisd.py</string>
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-    <key>HF_HUB_DISABLE_SYMLINKS_WARNING</key><string>1</string>
     <key>HF_HUB_OFFLINE</key><string>1</string>
+    <key>HF_HUB_DISABLE_SYMLINKS_WARNING</key><string>1</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Interactive</string>
+  <key>ProcessType</key><string>Background</string>
+  <key>LowPriorityIO</key><true/>
+  <key>Nice</key><integer>5</integer>
   <key>ThrottleInterval</key><integer>15</integer>
-  <key>StandardOutPath</key><string>__HOME__/.jarvis/mek_stdout.log</string>
-  <key>StandardErrorPath</key><string>__HOME__/.jarvis/mek_stderr.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.jarvis/jarvisd_stderr.log</string>
 </dict></plist>

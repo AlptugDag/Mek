@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Bağlam motoru: o an ne yaptığınızı anlar (ön plandaki uygulama, boşta kalma,
-render süreçleri, bellek/disk/GPU yükü)."""
+render süreçleri, bellek/disk/GPU yükü, mikrofonu kullanan uygulama — görüşme/kayıtta susmak için)."""
 import ctypes
 import os
 import re
@@ -79,7 +79,7 @@ def _ca_get(obj, sel, ctype):
     return list(buf)
 
 
-# Sürekli mikrofon tutan sistem süreçleri (Siri vb.) sayılmaz
+# Sürekli mikrofon tutan sistem süreçleri (Siri vb.) sayılmaz. Jarvis mikrofonu hiç açmaz.
 _MIC_IGNORE = re.compile(r"corespeechd|coreaudiod|siri|assistantd|heard|ControlCenter|universalaccessd")
 
 

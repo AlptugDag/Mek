@@ -1,0 +1,12 @@
+#!/bin/bash
+# Jarvis CLI
+#   jarvis brifing | durum | piyasa [thy] | güvenlik | temizle [derin] | sus [dakika] | log
+#   jarvis "metin"          -> doğrudan seslendirir (eski davranış)
+#   jarvis --timer 30 "..." -> eski zamanlayıcı
+SOCK="$HOME/.jarvis/jarvis.sock"
+case "$1" in
+  brifing|durum|piyasa|borsa|güvenlik|guvenlik|sus|temizle)
+    printf '%s' "$*" | nc -U -w 60 "$SOCK"; echo;;
+  log) exec tail -f "$HOME/.jarvis/jarvisd.log";;
+  *) exec "$HOME/.jarvis/venv/bin/python" "$HOME/.jarvis/jarvis.py" "$@";;
+esac
