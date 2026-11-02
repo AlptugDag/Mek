@@ -79,7 +79,7 @@ def _ca_get(obj, sel, ctype):
     return list(buf)
 
 
-# Sürekli mikrofon tutan sistem süreçleri (Siri vb.) sayılmaz. Jarvis mikrofonu hiç açmaz.
+# Sürekli mikrofon tutan sistem süreçleri (Siri vb.) sayılmaz. Mek mikrofonu hiç açmaz.
 _MIC_IGNORE = re.compile(r"corespeechd|coreaudiod|siri|assistantd|heard|ControlCenter|universalaccessd")
 
 
@@ -141,7 +141,7 @@ def _proc_scan():
     return pro, render, mem[:8], hot
 
 
-def snapshot():
+def snapshot(events=None):
     s = Snapshot()
     s.t = time.time()
     s.front = frontmost_app()
@@ -156,6 +156,8 @@ def snapshot():
     s.pro_pids, s.render_cpu, s.top_mem, s.hot = _proc_scan()
     s.apps = running_app_names()
     s.thermal = thermal_state()
+    if events:
+        events.publish("system.snapshot", snapshot=s)
     return s
 
 

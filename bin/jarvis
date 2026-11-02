@@ -1,12 +1,15 @@
 #!/bin/bash
-# Jarvis CLI
-#   jarvis brifing | durum | piyasa [thy] | güvenlik | temizle [derin] | sus [dakika] | log
-#   jarvis "metin"          -> doğrudan seslendirir (eski davranış)
-#   jarvis --timer 30 "..." -> eski zamanlayıcı
+# Mek command-line interface
+#   mek brifing | durum | piyasa [thy] | izleme [ekle|çıkar] | güvenlik | temizle [derin] | sus [dakika] | log
+#   mek kaldır <Uygulama.app|bundle-id> -> uygulamayı ve ilişkili kullanıcı kalıntılarını kaldırır
+#   mek etkinlik [aç|sesli] | çökmeler | güç | disk | ağ [test] | güncelle [...]
 SOCK="$HOME/.jarvis/jarvis.sock"
 case "$1" in
-  brifing|durum|piyasa|borsa|güvenlik|guvenlik|sus|temizle)
-    printf '%s' "$*" | nc -U -w 60 "$SOCK"; echo;;
+  kaldır|kaldir|uninstall|remove-app)
+    shift
+    exec "$HOME/.jarvis/venv/bin/python" "$HOME/.jarvis/jarvisd/app_uninstaller.py" "$@";;
+  brifing|durum|piyasa|borsa|izleme|watchlist|güvenlik|guvenlik|sus|temizle|disk|güç|guc|power|ağ|ag|network|etkinlik|activity|çökmeler|cokmeler|crashes|güncelle|guncelle|update|reklam|adblock)
+    printf '%s' "$*" | nc -U -w 180 "$SOCK"; echo;;
   log) exec tail -f "$HOME/.jarvis/jarvisd.log";;
   *) exec "$HOME/.jarvis/venv/bin/python" "$HOME/.jarvis/jarvis.py" "$@";;
 esac

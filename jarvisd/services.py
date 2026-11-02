@@ -53,13 +53,15 @@ def priv(*args):
 
 
 class ServiceManager:
-    def __init__(self, cfg):
+    def __init__(self, cfg, events=None):
         self.cfg = cfg
+        self.events = events
         self.profile = "normal"
         self.caff = None
         self.stopped_agents = []
         self.last_pro_seen = 0.0
         self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
+        priv("restore-high-power")
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -102,6 +104,8 @@ class ServiceManager:
     # --- profiller -------------------------------------------------------------
     def enter_performance(self):
         log.info("Profil: performance")
+        if self.events:
+            self.events.publish("performance.profile_changed", profile="performance")
         self.profile = "performance"
         for plist in self.cfg["deferrable_agents"]:
             if os.path.exists(plist):
@@ -113,6 +117,8 @@ class ServiceManager:
 
     def enter_normal(self):
         log.info("Profil: normal")
+        if self.events:
+            self.events.publish("performance.profile_changed", profile="normal")
         self.profile = "normal"
         if self.caff:
             self.caff.terminate()

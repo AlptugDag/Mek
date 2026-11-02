@@ -22,9 +22,9 @@ weather, system). Text is phrased on-device by Apple Intelligence (FoundationMod
 
 ## Konuştukları
 Mek aşağıdaki durumlarda kendiliğinden konuşur:
-- **Günün ilk brifingi:** masaya oturduğunuzda saat, hava, takvim, anımsatıcılar, piyasa özeti ve sistem durumu
+- **Günün ilk karşılaması:** masaya oturduğunuzda selam ve Mek'in hazır olduğu hemen söylenir; hava, takvim, anımsatıcılar ve sistem özeti ardından gelir. Brifing piyasa özeti içermez.
 - **Takvim:** etkinliklerden 10 dakika önce hatırlatma
-- **Piyasalar (hafta içi):** BIST 100, dolar, euro, gram altın, Bitcoin ve izleme listenizde belirgin bir hareket olduğunda haber verir, 18:15'te kapanış özeti okur. Alım-satım yapmaz, tavsiye vermez.
+- **Piyasalar (isteğe bağlı):** Yalnızca sizin izleme listenizdeki sembolleri kontrol eder ve kritik eşik aşıldığında haber verir. Liste boşken piyasa verisi çekmez; genel/kapanış özeti okumaz. Alım-satım yapmaz, tavsiye vermez.
 - **Hava:** önümüzdeki 3 saat için yağmur uyarısı
 - **Sistem:** biten renderlar, temizlik sonuçları, disk, ısı ve takas alanı uyarıları, uzun kurgu sonrası mola önerisi
 - **Bilgisayar başında değilken:** olanları biriktirir, döndüğünüzde özetler
@@ -43,7 +43,11 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
   - Bulut eşitleme, güncelleyici ve indeksleme gibi işleri verimlilik çekirdeklerine iter.
   - Gereksiz servisleri geçici olarak durdurur, uykuyu ve Power Nap'i engeller.
   - Uygulamalar kapanınca her şeyi eski hâline döndürür.
+- **M serisi güç modu:** Gerçek CPU/GPU overclock, voltaj veya frekans ayarı yapılmaz. macOS cihazda `highpowermode` destekliyorsa yalnızca AC gücünde render profili sırasında açılır; önceki AC ayarı kaydedilip normale dönüşte veya sonraki servis başlangıcında geri yüklenir.
 - **Kaçak süreçler:** Kurgu programı olmayan bir süreç işlemciyi uzun süre yorarsa onu verimlilik çekirdeklerine alır.
+- **Ağ:** Varsayılan arayüz, gateway/internet gecikmesi, paket kaybı ve arayüz trafik sayaçlarını izler. Bağlantı bozulunca örnekleme sıklaşır, sağlıklıyken seyrekleşir; yük veya kayıpta öneri verir. DNS, rota, MTU ve süreç durumunu otomatik değiştirmez.
+- İsteğe bağlı `mek ağ test`, macOS `networkQuality` ile indirme/yükleme kapasitesi ve responsiveness ölçer. Aktif test kısa süreli bant genişliği kullanır; kendiliğinden çalışmaz.
+- Python runtime modülleri sistem, ağ, güç, crash, güvenlik, takvim, bakım ve güncelleme olaylarını `events.py` üzerinden Mek coordinator'ına iletir; bildirim ve TTS bu olaylardan beslenir.
 - **Kendi yükü:** yaklaşık 70–90 MB bellek. Kontrol sıklığı duruma göre değişir: kurgu sırasında 15 saniye, siz bilgisayar başındayken 10 saniye, uzaktayken 45 saniye.
 
 ## Depolama temizliği
@@ -61,6 +65,24 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 
 Eski kurulum dosyaları ve aylardır açılmamış büyük dosyalar silinmez, yalnızca size raporlanır.
 
+## Disk sağlığı ve reklam engelleme
+- SMART durumu boşta altı saatte bir okunur; dosya sistemi haftada bir `diskutil verifyVolume` ile doğrulanır. Denetimler salt okunurdur; hata bulunursa bildirim gönderilir, onarım otomatik başlatılmaz. Bazı Apple SSD'lerinde SMART bilgisi sunulmadığından bu durum arıza kabul edilmez.
+- Sistem genelinde reklam engelleme isteğe bağlı hosts listesi kullanır. `mek reklam aç` etkinleştirir, `mek reklam güncelle` listeyi indirip yeniler, `mek reklam kapat` yalnızca Mek'in işaretli bölümünü kaldırır; `mek reklam durum` durumu gösterir. Hosts dosyasının diğer satırları korunur.
+- Etkinleştirme ve güncelleme StevenBlack hosts listesini HTTPS üzerinden indirir ve yönetici yardımcısını gerektirir. Başka uygulama ve VPN'ler kendi DNS/HTTPS-over-DNS yapılandırmalarıyla engellemeyi aşabilir; aynı alan adından sunulan reklamlar da hosts yöntemiyle ayrılamaz.
+- Mevcut kurulumda önce proje klasöründen `./install.sh`, ardından yeni helper komutlarını yüklemek için `sudo bash ~/.jarvis/jarvisd/install_privileged.sh` çalıştırın.
+
+## Yazılım ve donanım güncellemeleri
+- Mek günde en fazla bir kez; kullanıcı 15 dakikadan uzun süredir boşta, render yok, AC güç bağlı, en az 30 GB boş alan var, termal durum normalse ve ağda açık bir bağlantı sorunu görünmüyorsa otomatik güncelleme kurar.
+- macOS'in önerdiği aynı ana sürüm güvenlik/sistem güncellemeleri ve Apple firmware güncellemeleri `softwareupdate` ile kurulur. Büyük macOS sürüm yükseltmeleri ve otomatik yeniden başlatma yapılmaz.
+- Homebrew formula/cask güncellemeleri ve `mas` yüklüyse Mac App Store uygulamaları kontrol edilir. Sabitlenmiş paketler atlanır; açık GUI uygulamalarının cask/App Store güncellemeleri ertelenir. Cask uygulama adı bulunamazsa o cask güvenlik için ertelenir.
+- USB/Thunderbolt aygıtları üretici/model/raporlanan firmware sürümüyle envantere alınır. Apple firmware'i Apple güncelleme kataloğundan gelir; üçüncü taraf çevre birimi firmware'ini güvenli ve genel bir macOS arayüzüyle kurmak mümkün değildir, bu nedenle üretici aracı gerekir.
+- Mevcut kurulumda önce `./install.sh`, sonra güncel root helper için `sudo bash ~/.jarvis/jarvisd/install_privileged.sh` çalıştırın.
+
+## Güç kesintisi ve sesli bildirimler
+- `mek güç` macOS güç kaynağını ve görülebilen UPS telemetrisini raporlar. Masaüstü bilgisayarı gerçek kesintiden korumak için USB/HID uyumlu UPS gerekir; UPS telemetrisi yoksa Mek kesintiyi önleyemez.
+- Pil/UPS kaynağına geçişte, güç geri geldiğinde ve UPS kritik seviyeye indiğinde Mek TTS ile uyarır. Kritik seviyede kapatma varsayılan olarak kapalıdır. İsteğe bağlı açmak için `~/.jarvis/jarvis.json` dosyasına `"ups_auto_shutdown_enabled": true` ekleyin; yalnızca raporlanan UPS deşarj oluyor ve yüzde 15 veya 5 dakika eşiğinin altındaysa bir dakikalık zarif kapatma planlanır. Bu arada AC geri gelirse Mek'in planladığı kapatma iptal edilir.
+- Activity Monitor raporları, çökmeler, güç, güncelleme ve güvenlik bildirimleri ortak Mek event kanalından TTS bildirimlerine aktarılır. `mek etkinlik sesli` anlık CPU/bellek özetini seslendirir.
+
 ## Güvenlik
 - **Kripto madenciler:** İmza, komut satırı ya da havuz bağlantısıyla tespit edilir. Süreç durdurulur, dosyası ve onu başlatan ajan karantinaya alınır.
 - **Başlangıç öğeleri:** Yeni eklenenler 15 dakikada bir denetlenir. İmzasız ve şüpheli konumdan çalışan bir öğe devre dışı bırakılır.
@@ -70,7 +92,7 @@ Eski kurulum dosyaları ve aylardır açılmamış büyük dosyalar silinmez, ya
 
 ## Kurulum
 
-Terminal komutu ve kurulum klasörü teknik nedenlerle `jarvis` / `~/.jarvis` adını taşır.
+Komut artık `mek`; eski kurulumlarla uyum için kullanıcı verisi ve daemon yolları `~/.jarvis` altında korunur.
 
 ```bash
 git clone https://github.com/AlptugDag/Mek.git && cd Mek
@@ -80,15 +102,35 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 İlk çalıştırmada macOS, Takvim ve Anımsatıcılar için izin ister.
 
 **Terminal komutları:**
-- `jarvis brifing`: brifingi hemen okur
-- `jarvis durum`: anlık sistem durumu
-- `jarvis piyasa thy`: belirli bir hissenin fiyatı
-- `jarvis güvenlik`: güvenlik özeti
-- `jarvis temizle [derin]`: temizliği elle başlatır
-- `jarvis sus 60`: 60 dakika sessiz kalır
-- `jarvis log`: kayıtları izler
+- `mek brifing`: brifingi hemen okur
+- `mek durum`: anlık sistem durumu
+- `mek piyasa thy`: belirli bir hissenin fiyatı
+- `mek izleme`: izleme listesini ve kritik değişim eşiklerini gösterir
+- `mek izleme ekle THYAO.IS AAPL`: yalnızca seçtiğiniz sembolleri kritik değişimler için izler
+- `mek izleme çıkar AAPL`: sembolü listeden çıkarır; liste `~/.jarvis/jarvis.json` dosyasına kaydedilir
+- `mek güvenlik`: güvenlik özeti
+- `mek etkinlik [aç|sesli]`: Activity Monitor özeti, yerel uygulamayı açma veya TTS özeti
+- `mek çökmeler`: son uygulama çökme raporları
+- `mek güç`: AC/UPS güç durumu
+- `mek güç koruma`: otomatik UPS kapatmanın açık/kapalı durumunu gösterir
+- `mek temizle [derin]`: temizliği elle başlatır
+- `mek disk`: disk SMART durumunu gösterir
+- `mek ağ`: arayüz durumu, yaklaşık trafik ve ping kalitesini gösterir
+- `mek ağ test`: isteğe bağlı aktif indirme/yükleme kalite testi
+- `mek güncelle kontrol`: Apple, Homebrew ve varsa Mac App Store güncellemelerini listeler
+- `mek güncelle şimdi`: yalnızca güvenli bakım penceresi açıksa güncellemeleri kurar
+- `mek güncelle durumu`: son otomatik güncelleme sonucunu gösterir
+- `mek güncelle donanım`: bağlı USB/Thunderbolt aygıtlarını ve raporlanan firmware sürümlerini gösterir
+- `mek reklam [durum|aç|güncelle|kapat]`: hosts tabanlı sistem geneli reklam engellemeyi yönetir
+- `mek kaldır /Applications/Uygulama.app`: uygulamayı ve kullanıcı Library'sindeki doğrudan ilişkili kalıntıları önizler; silme için bundle ID onayı ister. Uygulama önceden kaldırıldıysa bundle ID kullanılabilir.
+- `mek sus 60`: 60 dakika sessiz kalır
+- `mek log`: kayıtları izler
 
-**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `jarvis brifing` yazın, Siri'ye "Mek brifing" deyin.
+Uygulama kaldırma; cache, tercihler, destek dosyaları, sandbox container'ları ve uygulamaya ait kullanıcı başlangıç ajanları gibi bundle ID ile doğrudan eşleşen öğeleri kapsar. Paylaşılan Group Container'lar, kullanıcı belgeleri ve yönetici yetkisi gerektiren sistem öğeleri bilerek kapsam dışındadır.
+
+**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `mek brifing` yazın, Siri'ye "Mek brifing" deyin.
+
+Mek mikrofondan dinlemez. Ona verilecek komutlar, ayarlar ve izleme tercihleri terminalde `mek ...` komutlarıyla veya Siri Kestirmeleri üzerinden iletilir. Sistem eylemleri bu komutlar ve güvenli, tanımlı bakım kurallarıyla sınırlıdır; keyfî terminal komutları üretip çalıştırmaz.
 
 ## Yapı
 ```
@@ -98,6 +140,11 @@ jarvisd/context.py    ön plandaki uygulama, boşta kalma süresi, GPU, render t
 jarvisd/apple.py      Takvim/Anımsatıcılar (EventKit), piyasalar, Türkçe tarih ayrıştırma
 jarvisd/security.py   madenci, kalıcılık, ClamAV, güvenlik ayarları, karantina
 jarvisd/cleaner.py    katmanlı depolama temizliği
+jarvisd/activity_monitor.py süreç özeti, Activity Monitor ve crash raporları
+jarvisd/power_guard.py UPS/güç olayları ve isteğe bağlı güvenli kapatma
+jarvisd/events.py     runtime modülleri için olay kanalı
+jarvisd/network_optimizer.py  adaptif ağ sağlığı, trafik ve isteğe bağlı kapasite ölçümü
+jarvisd/updater.py    Apple, Homebrew/MAS güncellemeleri ve USB/Thunderbolt envanteri
 ai/jarvis-ai.swift    Apple Intelligence (FoundationModels) köprüsü
 jarvis.py             ses (EMA Lightning + Mac Studio hoparlör EQ), hava durumu
 ```

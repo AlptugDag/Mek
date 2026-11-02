@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Jarvis depolama temizliği — kapsamlı, katmanlı, kendi kendine çalışan.
+"""Mek depolama temizliği — kapsamlı, katmanlı, kendi kendine çalışan.
 
 Katmanlar
   gunluk    yaşa göre önbellek/kayıt/geçici dosya temizliği (kullanıcı alanı)

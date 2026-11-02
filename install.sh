@@ -1,5 +1,5 @@
 #!/bin/bash
-# Jarvis kurulumu (~/.jarvis). Eski ayrı ajanları ve Mek'i durdurur.
+# Mek kurulumu (legacy ~/.jarvis dizinini kullanır). Eski ayrı ajanları durdurur.
 set -euo pipefail
 SRC="$(cd "$(dirname "$0")" && pwd)"
 J="$HOME/.jarvis"; BIN="$HOME/.local/bin"; LA="$HOME/Library/LaunchAgents"; U=$(id -u)
@@ -10,6 +10,7 @@ CONF=/opt/homebrew/etc/clamav/freshclam.conf
 mkdir -p "$J/jarvisd" "$J/ai" "$J/state" "$J/legacy" "$BIN" "$LA"
 cp "$SRC"/jarvisd/* "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
 cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh"
+ln -sf jarvis "$BIN/mek"
 swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
 [ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
@@ -20,4 +21,4 @@ done
 sed "s|__HOME__|$HOME|g" "$SRC/launchd/com.alptug.jarvis.plist" > "$LA/com.alptug.jarvis.plist"
 launchctl bootout "gui/$U/com.alptug.jarvis" 2>/dev/null || true
 launchctl bootstrap "gui/$U" "$LA/com.alptug.jarvis.plist"
-echo "Jarvis kuruldu. Sistem alanı ve güç profilleri için bir kez:  sudo bash ~/.jarvis/jarvisd/install_privileged.sh"
+echo "Mek kuruldu. Sistem alanı ve güç profilleri için bir kez:  sudo bash ~/.jarvis/jarvisd/install_privileged.sh"

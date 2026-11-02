@@ -26,7 +26,7 @@ import psutil
 
 from config import HOME, QUARANTINE, STATE_DIR
 
-log = logging.getLogger("jarvis.security")
+log = logging.getLogger("mek.security")
 
 MINER_NAMES = re.compile(r"xmrig|xmr-stak|minerd|cpuminer|cgminer|bfgminer|ethminer|nbminer|t-rex|"
                          r"lolminer|phoenixminer|gminer|teamredminer|nanominer|srbminer|xmrminer|"
@@ -85,10 +85,16 @@ def _program_of(plist_path):
 
 
 class Security:
-    def __init__(self, notify):
+    def __init__(self, notify, events=None):
         self.notify = notify          # notify(text, urgent=False)
+        self.events = events
         self.last = {}
         self.reported = set()
+
+    def _notify(self, text, urgent=False):
+        if self.events:
+            self.events.publish("security.alert", text=text, urgent=urgent)
+        self.notify(text, urgent=urgent)
 
     def _due(self, key, every):
         now = time.time()
@@ -131,8 +137,8 @@ class Security:
                         self.neutralize(pid, name, full, f"madencilik havuzu bağlantısı (port {port})")
                     elif ("pool", pid) not in self.reported:
                         self.reported.add(("pool", pid))
-                        self.notify(f"{name} adlı uygulama madencilik havuzlarının sık kullandığı {port} "
-                                    "portuna bağlı. Şimdilik dokunmadım, tanımıyorsanız haber verin.")
+                        self._notify(f"{name} adlı uygulama madencilik havuzlarının sık kullandığı {port} "
+                                     "portuna bağlı. Şimdilik dokunmadım, tanımıyorsanız haber verin.")
 
     def neutralize(self, pid, name, cmd, reason):
         key = ("kill", name)
@@ -155,8 +161,8 @@ class Security:
         if key not in self.reported:
             self.reported.add(key)
             extra = f" Onu başlatan {agent} ajanını devre dışı bıraktım." if agent else ""
-            self.notify(f"Güvenlik uyarısı: {name} süreci {reason} taşıyordu, durdurdum.{extra} "
-                        "Dosyası karantina klasöründe, silmedim.", urgent=True)
+            self._notify(f"Güvenlik uyarısı: {name} süreci {reason} taşıyordu, durdurdum.{extra} "
+                         "Dosyası karantina klasöründe, silmedim.", urgent=True)
 
     def _agent_for(self, needle):
         """Zararlıyı başlatan kullanıcı ajanını bulup devre dışı bırakır (yalnızca kullanıcı alanı)."""
@@ -213,11 +219,11 @@ class Security:
             if suspicious and p.startswith(HOME):
                 subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", p], capture_output=True)
                 self.quarantine(p)
-                self.notify(f"Güvenlik: {what} bir başlangıç öğesi ({label}) imzasız ve şüpheli bir konumdan "
-                            "çalışıyordu. Devre dışı bırakıp karantinaya aldım.", urgent=True)
+                self._notify(f"Güvenlik: {what} bir başlangıç öğesi ({label}) imzasız ve şüpheli bir konumdan "
+                             "çalışıyordu. Devre dışı bırakıp karantinaya aldım.", urgent=True)
             elif sig in ("unsigned", "adhoc") and not p.startswith(os.path.join(HOME, "Library/LaunchAgents/com.alptug")):
-                self.notify(f"Bilginiz olsun: {what} bir başlangıç öğesi eklendi, {label}. Programı imzasız. "
-                            "Siz kurduysanız sorun yok.")
+                self._notify(f"Bilginiz olsun: {what} bir başlangıç öğesi eklendi, {label}. Programı imzasız. "
+                             "Siz kurduysanız sorun yok.")
             else:
                 log.info("Başlangıç öğesi %s: %s (%s)", what, label, sig)
         _save(BASELINE, current)
@@ -286,8 +292,8 @@ class Security:
             if m:
                 found += 1
                 dest = self.quarantine(m.group(1))
-                self.notify(f"Zararlı dosya bulundu: {os.path.basename(m.group(1))}, {m.group(2)}. "
-                            "Karantinaya aldım.", urgent=True)
+                self._notify(f"Zararlı dosya bulundu: {os.path.basename(m.group(1))}, {m.group(2)}. "
+                             "Karantinaya aldım.", urgent=True)
                 log.warning("ZARARLI: %s %s -> %s", m.group(1), m.group(2), dest)
         _save(SCAN_STATE, st)
         return found

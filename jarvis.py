@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Jarvis Personal Assistant
+Mek Personal Assistant
 Exclusively powered by EMA Lightning TTS (canberkkkkkk/ema-lightning)
 Configured for Alptuğ Bey.
 Acoustically tuned specifically for Apple Mac Studio built-in speaker.
@@ -21,7 +21,7 @@ import numpy as np
 import scipy.signal as signal
 import sounddevice as sd
 
-JARVIS_DIR = os.path.expanduser("~/.jarvis")
+MEK_HOME = os.path.expanduser("~/.jarvis")
 TARGET_DEVICE_NAME = "mac studio"
 TARGET_VOLUME = 0.30  # %30 ses seviyesi
 SPEECH_SPEED = 1.08   # Çevik, tetikte ve net bir asistan ritmi
@@ -107,7 +107,7 @@ def set_mac_studio_hardware_volume(ca_id, volume=TARGET_VOLUME):
         unmute = ctypes.c_uint32(0)
         coreaudio.AudioObjectSetPropertyData(ca_id, ctypes.byref(mute_addr), 0, None, ctypes.sizeof(unmute), ctypes.byref(unmute))
     except Exception as e:
-        print(f"[Jarvis] Donanım ses seviyesi ayarlanamadı: {e}", file=sys.stderr)
+        print(f"[Mek] Donanım ses seviyesi ayarlanamadı: {e}", file=sys.stderr)
 
 
 # --- MAC STUDIO HOPARLÖRÜ İÇİN ÖZEL AKUSTİK EKOLAYZIR (DSP) ---
@@ -340,7 +340,7 @@ def build_periodic_message() -> str:
 
 
 def speak(text: str):
-    print(f"[Jarvis] Sentezleniyor: {text}")
+    print(f"[Mek] Sentezleniyor: {text}")
     try:
         from ema_lightning import EMA
         tts = EMA()
@@ -355,8 +355,8 @@ def speak(text: str):
             set_mac_studio_hardware_volume(ca_id, TARGET_VOLUME)
 
         pct = int(TARGET_VOLUME * 100)
-        print(f"[Jarvis] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
-        print(f"[Jarvis] Genel ses kaynağına dokunulmadan doğrudan Mac Studio Hoparlörü üzerinden %{pct} seste çalınıyor...")
+        print(f"[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
+        print(f"[Mek] Genel ses kaynağına dokunulmadan doğrudan Mac Studio Hoparlörü üzerinden %{pct} seste çalınıyor...")
 
         if sd_idx is not None:
             sd.play(audio_eq, samplerate=speech.sample_rate, device=sd_idx)
@@ -365,31 +365,31 @@ def speak(text: str):
             sd.play(audio_eq, samplerate=speech.sample_rate)
             sd.wait()
 
-        print("[Jarvis] Oynatma başarıyla tamamlandı.")
+        print("[Mek] Oynatma başarıyla tamamlandı.")
     except Exception as e:
-        print(f"[Jarvis] Hata: {e}", file=sys.stderr)
+        print(f"[Mek] Hata: {e}", file=sys.stderr)
 
 
 def main():
-    os.makedirs(JARVIS_DIR, exist_ok=True)
+    os.makedirs(MEK_HOME, exist_ok=True)
 
-    parser = argparse.ArgumentParser(description="Jarvis AI Assistant")
+    parser = argparse.ArgumentParser(description="Mek AI Assistant")
     parser.add_argument("text", nargs="*", help="Söylenecek metin (opsiyonel)")
     parser.add_argument("--periodic", action="store_true", help="Günün ara saatlerindeki periyodik kontrol modu")
     parser.add_argument("--timer", type=int, help="Belirtilen dakika sonra konuş (arka planda bekler)")
     parser.add_argument("--force", action="store_true", help="Sessiz saat kontrolünü atla")
     args = parser.parse_args()
 
-    # Zamanlayıcı (Timer) modu: jarvis --timer 30 "Mola bitti Alptuğ Bey"
+    # Zamanlayıcı modu: mek --timer 30 "Mola bitti Alptuğ Bey"
     if args.timer:
         minutes = args.timer
         msg = " ".join(args.text) if args.text else f"Alptuğ Bey, {minutes} dakikalık süreniz doldu efendim."
-        print(f"[Jarvis] Zamanlayıcı kuruldu: {minutes} dakika sonra konuşulacak.")
+        print(f"[Mek] Zamanlayıcı kuruldu: {minutes} dakika sonra konuşulacak.")
         time.sleep(minutes * 60)
         speak(msg)
         return
 
-    # Doğrudan özel metin verilmişse: jarvis "Mesaj"
+    # Doğrudan özel metin verilmişse: mek "Mesaj"
     if args.text and not args.periodic:
         custom_message = " ".join(args.text)
         speak(custom_message)
@@ -399,13 +399,13 @@ def main():
 
     # Sessiz saatler (00:00 - 11:00)
     if is_quiet_hours(now) and not args.force:
-        print(f"[Jarvis] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma iptal edildi.")
+        print(f"[Mek] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma iptal edildi.")
         sys.exit(0)
 
     # Periyodik mod: kullanıcı bilgisayar başında değilse (idle > 10 dk) boş odaya konuşmaz
     if args.periodic:
         if not is_user_present(max_idle_seconds=600) and not args.force:
-            print("[Jarvis] Kullanıcı aktif değil (bilgisayar başında değil). Periyodik konuşma atlandı.")
+            print("[Mek] Kullanıcı aktif değil (bilgisayar başında değil). Periyodik konuşma atlandı.")
             sys.exit(0)
         message = build_periodic_message()
     else:
