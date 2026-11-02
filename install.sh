@@ -12,6 +12,7 @@ cp "$SRC"/jarvisd/* "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
 cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh"
 ln -sf jarvis "$BIN/mek"
 swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
+swiftc -O "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar"
 [ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
 for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek mek.ui; do
@@ -19,6 +20,9 @@ for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek me
   [ -f "$LA/com.alptug.$l.plist" ] && mv "$LA/com.alptug.$l.plist" "$J/legacy/"
 done
 sed "s|__HOME__|$HOME|g" "$SRC/launchd/com.alptug.jarvis.plist" > "$LA/com.alptug.jarvis.plist"
+sed "s|__HOME__|$HOME|g" "$SRC/launchd/com.alptug.mek.ui.plist" > "$LA/com.alptug.mek.ui.plist"
 launchctl bootout "gui/$U/com.alptug.jarvis" 2>/dev/null || true
 launchctl bootstrap "gui/$U" "$LA/com.alptug.jarvis.plist"
+launchctl bootout "gui/$U/com.alptug.mek.ui" 2>/dev/null || true
+launchctl bootstrap "gui/$U" "$LA/com.alptug.mek.ui.plist"
 echo "Mek kuruldu. Sistem alanı ve güç profilleri için bir kez:  sudo bash ~/.jarvis/jarvisd/install_privileged.sh"

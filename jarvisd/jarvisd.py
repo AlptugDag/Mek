@@ -734,6 +734,11 @@ class Mek:
 
     def command(self, cmd):
         c = cmd.lower()
+        if c in ("yardım", "yardim", "help"):
+            return ("Komutlar: brifing, durum, izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
+                    "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], "
+                    "güncelle [kontrol|durum|şimdi], reklam [durum|aç|güncelle|kapat], sus <dakika>. "
+                    "Yalnızca tanımlı ve güvenli eylemler yürütülür; Mek keyfî terminal komutu çalıştırmaz.")
         if c in ("güç", "guc", "power", "güç durumu", "guc durumu", "power status"):
             state = power.read_power_status()
             if not state["available"]:
@@ -816,11 +821,16 @@ class Mek:
             self.speak(cmd[6:])
             return "ok"
         s = self.snap
+        if c in ("durum", "status"):
+            if not s:
+                return "Henüz ölçüm yok."
+            return (f"Öndeki uygulama {s.front}, CPU %{s.cpu:.0f}, GPU %{s.gpu}, bellek %{s.mem_pct:.0f}, "
+                    f"takas {s.swap_gb:.1f} GB, boş disk {s.disk_free_gb:.0f} GB, "
+                    f"profil {self.services.profile}, süren render: "
+                    f"{', '.join(self.renders.active()) or 'yok'}.")
         if not s:
-            return "Henüz ölçüm yok."
-        return (f"Öndeki uygulama {s.front}, CPU %{s.cpu:.0f}, GPU %{s.gpu}, bellek %{s.mem_pct:.0f}, "
-                f"takas {s.swap_gb:.1f} GB, boş disk {s.disk_free_gb:.0f} GB, profil {self.services.profile}, "
-                f"süren render: {', '.join(self.renders.active()) or 'yok'}.")
+            return "Komutu tanıyamadım. Desteklenen komutlar için `mek yardım` yazın."
+        return "Komutu tanıyamadım. Desteklenen komutlar için `mek yardım` yazın."
 
     def watchlist_command(self, command):
         parts = command.split(maxsplit=2)

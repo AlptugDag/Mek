@@ -22,6 +22,7 @@ class WatchlistCommandTests(unittest.TestCase):
             "market_watchlist": [],
             "market_alert_pct": {"default": 3.0},
         }
+        self.mek.snap = None
 
     @patch("jarvisd.jarvisd.config.save")
     def test_add_and_remove_symbols_persisted(self, save):
@@ -42,6 +43,10 @@ class WatchlistCommandTests(unittest.TestCase):
         self.assertIn("bulunmuyor", self.mek.watchlist_command("izleme çıkar AAPL"))
         save.assert_not_called()
         self.assertEqual(self.mek.cfg["market_watchlist"], [])
+
+    def test_command_help_and_unknown_command_are_explained(self):
+        self.assertIn("keyfî terminal komutu çalıştırmaz", self.mek.command("yardım"))
+        self.assertIn("mek yardım", self.mek.command("not a supported command"))
 
     @patch("jarvisd.jarvisd.config.save", side_effect=OSError("disk full"))
     def test_persistence_failure_is_reported_without_changing_runtime_config(self, _save):

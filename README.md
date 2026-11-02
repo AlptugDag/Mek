@@ -132,6 +132,8 @@ Uygulama kaldırma; cache, tercihler, destek dosyaları, sandbox container'ları
 
 Mek mikrofondan dinlemez. Ona verilecek komutlar, ayarlar ve izleme tercihleri terminalde `mek ...` komutlarıyla veya Siri Kestirmeleri üzerinden iletilir. Sistem eylemleri bu komutlar ve güvenli, tanımlı bakım kurallarıyla sınırlıdır; keyfî terminal komutları üretip çalıştırmaz.
 
+Mek, kurulumdan sonra macOS menü çubuğunda görünür. Menüden brifing, sistem/güç durumu ve izleme listesi açılabilir; **Mek'e komut ver…** alanından desteklenen bir komut veya izleme tercihi gönderilebilir. Bu pencere arka plan servisine yerel Unix soketi üzerinden bağlanır; komutlar bu cihazda kalır.
+
 ## Yapı
 ```
 jarvisd/jarvisd.py    ana servis: olaylar, brifing, bildirim, zamanlama
@@ -145,6 +147,7 @@ jarvisd/power_guard.py UPS/güç olayları ve isteğe bağlı güvenli kapatma
 jarvisd/events.py     runtime modülleri için olay kanalı
 jarvisd/network_optimizer.py  adaptif ağ sağlığı, trafik ve isteğe bağlı kapasite ölçümü
 jarvisd/updater.py    Apple, Homebrew/MAS güncellemeleri ve USB/Thunderbolt envanteri
+ui/MekMenuBar.swift   macOS menü çubuğu ve komut penceresi
 ai/jarvis-ai.swift    Apple Intelligence (FoundationModels) köprüsü
 jarvis.py             ses (EMA Lightning + Mac Studio hoparlör EQ), hava durumu
 ```
