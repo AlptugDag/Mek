@@ -24,7 +24,7 @@ import time
 
 import psutil
 
-from config import HOME, QUARANTINE, STATE_DIR
+from config import HOME, MEK_HOME, QUARANTINE, STATE_DIR
 
 log = logging.getLogger("mek.security")
 
@@ -42,6 +42,13 @@ PERSIST_GLOBS = [os.path.join(HOME, "Library/LaunchAgents/*.plist"), "/Library/L
                  "/Library/LaunchDaemons/*.plist"]
 BASELINE = os.path.join(STATE_DIR, "persist_baseline.json")
 SCAN_STATE = os.path.join(STATE_DIR, "av_scan.json")
+TRUSTED = os.path.join(STATE_DIR, "trusted_items.json")  # karantinadan geri alınan, bir daha dokunulmayacak öğeler
+
+
+def is_own_item(label, prog):
+    """Mek'in kendi ajanları (daemon, menü çubuğu) kendi kendini karantinaya almasın."""
+    return bool(prog) and label.startswith(("com.alptug.jarvis", "com.alptug.mek")) and \
+        os.path.realpath(prog).startswith((MEK_HOME + os.sep, os.path.join(HOME, ".local/bin") + os.sep))
 
 
 def _load(path, default):
@@ -194,6 +201,34 @@ class Security:
             log.warning("Karantinaya alınamadı %s: %s", path, e)
             return None
 
+    def quarantine_list(self):
+        """Karantina kayıtları: [(no, zaman, özgün yol, karantina yolu, hâlâ orada mı)]."""
+        rows = []
+        try:
+            lines = open(os.path.join(QUARANTINE, "kayit.txt"), encoding="utf-8").read().splitlines()
+        except OSError:
+            return rows
+        for i, line in enumerate(lines, 1):
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                rows.append((i, parts[0], parts[1], parts[3], os.path.exists(parts[3])))
+        return rows
+
+    def quarantine_restore(self, no):
+        """Öğeyi yerine koyar ve bir daha şüpheli saymaz. Süreci başlatmaz; yeniden başlatma sizin kararınız."""
+        for i, _, orig, dest, there in self.quarantine_list():
+            if i != no:
+                continue
+            if not there:
+                return "Bu öğe karantinada artık yok."
+            if os.path.exists(orig):
+                return f"Özgün konumda zaten bir dosya var: {orig}"
+            os.chmod(dest, 0o644)
+            shutil.move(dest, orig)
+            _save(TRUSTED, sorted(set(_load(TRUSTED, [])) | {orig}))
+            return f"Geri alındı: {orig}. Güvenilir listesine eklendi; yeniden başlatmak sizin kararınız."
+        return "Böyle bir karantina kaydı yok."
+
     # ------------------------------------------------------------------ kalıcılık
     def audit_persistence(self):
         """Yeni başlangıç öğelerini taban çizgisiyle karşılaştırır (15 dakikada bir)."""
@@ -208,10 +243,13 @@ class Security:
         if base is None:  # ilk çalıştırma: mevcut durumu kabul et
             _save(BASELINE, current)
             return
+        trusted = _load(TRUSTED, [])
         for p, h in current.items():
-            if base.get(p) == h:
+            if base.get(p) == h or p in trusted:
                 continue
             label, prog = _program_of(p)
+            if is_own_item(label, prog):
+                continue
             sig = signature(prog) if prog else "missing"
             suspicious = sig in ("unsigned", "adhoc") and prog and (
                 SUSPICIOUS_DIRS.search(prog) or MINER_NAMES.search(prog or ""))

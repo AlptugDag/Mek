@@ -37,6 +37,7 @@ import updater
 import power_guard as power
 from events import EventBus
 from network_optimizer import NetworkOptimizer
+from agent import Agent
 from security import Security
 from services import ServiceManager
 
@@ -66,6 +67,7 @@ class Mek:
         self.cfg = config.load()
         self.T = self.cfg["user_title"]
         self.events = EventBus()
+        self.agent = Agent(self)
         self.events.subscribe("app.crashed", self._on_crash_event)
         self.events.subscribe("network.state_changed", self._on_network_state_event)
         self.events.subscribe("security.alert", self._on_security_event)
@@ -737,7 +739,7 @@ class Mek:
         if c in ("yardım", "yardim", "help"):
             return ("Komutlar: brifing, durum, izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
                     "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], "
-                    "güncelle [kontrol|durum|şimdi], reklam [durum|aç|güncelle|kapat], sus <dakika>. "
+                    "güncelle [kontrol|durum|şimdi], karantina [geri <no>], günlük [adet], sor <serbest soru> (ya da doğrudan yazın), onay, iptal, reklam [durum|aç|güncelle|kapat], sus <dakika>. "
                     "Yalnızca tanımlı ve güvenli eylemler yürütülür; Mek keyfî terminal komutu çalıştırmaz.")
         if c in ("güç", "guc", "power", "güç durumu", "guc durumu", "power status"):
             state = power.read_power_status()
@@ -812,6 +814,31 @@ class Mek:
             mins = int(re.findall(r"\d+", c)[0]) if re.findall(r"\d+", c) else 60
             self.muted_until = time.time() + mins * 60
             return f"{mins} dakika sessizim."
+        if c in ("onay", "evet", "onayla"):
+            return self.agent.confirm()
+        if c in ("iptal", "vazgeç", "vazgec"):
+            return self.agent.cancel()
+        if c.startswith(("sor ", "ask ", "derin ")):
+            return self.agent.ask(cmd.split(None, 1)[1] if not c.startswith("derin") else cmd)
+        if c.startswith(("karantina", "karantına")):
+            arg = c.split()[1:]
+            if arg[:1] == ["geri"] and len(arg) > 1 and arg[1].isdigit():
+                return self.security.quarantine_restore(int(arg[1]))
+            rows = self.security.quarantine_list()
+            if not rows:
+                return "Karantina boş."
+            return "\n".join(f"{i}) {ts}  {orig}  [{'karantinada' if there else 'dosya yok'}]"
+                             for i, ts, orig, _, there in rows) + \
+                "\nGeri almak için: mek karantina geri <no>"
+        if c in ("günlük", "gunluk", "log") or c.startswith(("günlük ", "gunluk ")):
+            n = int(re.findall(r"\d+", c)[0]) if re.findall(r"\d+", c) else 20
+            keys = ("Asistan", "SAY:", "Arka plana", "Güvenlik", "karantin", "Karantin", "madenci", "temizlik", "güncell")
+            try:
+                with open(config.LOG_FILE, encoding="utf-8", errors="ignore") as f:
+                    lines = [l.strip()[:300] for l in f.readlines()[-3000:] if any(k in l for k in keys)]
+            except OSError:
+                return "Günlük okunamadı."
+            return "\n".join(lines[-n:]) or "Kayda değer olay yok."
         if c.startswith("güvenlik"):
             issues = self.security.posture()
             q = len(os.listdir(config.QUARANTINE)) - (1 if os.path.exists(os.path.join(config.QUARANTINE, "kayit.txt")) else 0)
@@ -828,8 +855,8 @@ class Mek:
                     f"takas {s.swap_gb:.1f} GB, boş disk {s.disk_free_gb:.0f} GB, "
                     f"profil {self.services.profile}, süren render: "
                     f"{', '.join(self.renders.active()) or 'yok'}.")
-        if not s:
-            return "Komutu tanıyamadım. Desteklenen komutlar için `mek yardım` yazın."
+        if len(cmd.split()) >= 2 or "?" in cmd:  # tanımlı komut değilse serbest soru say
+            return self.agent.ask(cmd)
         return "Komutu tanıyamadım. Desteklenen komutlar için `mek yardım` yazın."
 
     def watchlist_command(self, command):

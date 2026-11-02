@@ -46,7 +46,7 @@ class WatchlistCommandTests(unittest.TestCase):
 
     def test_command_help_and_unknown_command_are_explained(self):
         self.assertIn("keyfî terminal komutu çalıştırmaz", self.mek.command("yardım"))
-        self.assertIn("mek yardım", self.mek.command("not a supported command"))
+        self.assertIn("mek yardım", self.mek.command("xyzzy"))
 
     @patch("jarvisd.jarvisd.config.save", side_effect=OSError("disk full"))
     def test_persistence_failure_is_reported_without_changing_runtime_config(self, _save):

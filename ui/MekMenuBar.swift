@@ -1,10 +1,14 @@
+import AVFoundation
 import AppKit
 import Foundation
+import Speech
 
 @MainActor
 final class MekMenuBar: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var commandInProgress = false
+    private let engine = AVAudioEngine()
+    private var listening = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -18,7 +22,8 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         add("Güç durumu", to: menu, action: #selector(runPower))
         add("Güvenlik özeti", to: menu, action: #selector(runSecurity))
         menu.addItem(.separator())
-        add("Mek'e komut ver…", to: menu, action: #selector(promptForCommand))
+        add("Mek'e sor veya komut ver…", to: menu, action: #selector(promptForCommand))
+        add("Sesle sor (8 sn dinler)", to: menu, action: #selector(askByVoice))
         add("Komut yardımı", to: menu, action: #selector(runHelp))
         menu.addItem(.separator())
         add("Mek'i kapat", to: menu, action: #selector(quit))
@@ -57,13 +62,13 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
     @objc private func promptForCommand() {
         let alert = NSAlert()
-        alert.messageText = "Mek'e komut verin"
-        alert.informativeText = "Örnek: izleme ekle THYAO.IS veya temizle"
+        alert.messageText = "Mek'e sorun veya komut verin"
+        alert.informativeText = "Örnek: bilgisayar neden yavaş? · temizle · derin: bu hafta ne yaptın?"
         alert.addButton(withTitle: "Gönder")
         alert.addButton(withTitle: "Vazgeç")
 
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        input.placeholderString = "Komut veya izleme tercihi"
+        input.placeholderString = "Serbest soru ya da komut"
         alert.accessoryView = input
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
@@ -72,11 +77,63 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         send(command)
     }
 
+    /// Mikrofon yalnızca bu menü öğesine tıklayınca açılır; en fazla 8 saniye sonra kapanır.
+    @objc private func askByVoice() {
+        guard !listening else { return }
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            DispatchQueue.main.async {
+                guard status == .authorized else {
+                    self?.showResult("Konuşma tanıma izni verilmedi (Sistem Ayarları > Gizlilik).")
+                    return
+                }
+                self?.startListening()
+            }
+        }
+    }
+
+    private func startListening() {
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "tr-TR")), recognizer.isAvailable else {
+            showResult("Türkçe konuşma tanıma şu an kullanılamıyor.")
+            return
+        }
+        let request = SFSpeechAudioBufferRecognitionRequest()
+        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+            request.append(buffer)
+        }
+        engine.prepare()
+        do { try engine.start() } catch {
+            showResult("Mikrofon açılamadı: \(error.localizedDescription)")
+            return
+        }
+        listening = true
+        statusItem.button?.title = "Mek 🎙"
+        var finished = false
+        let finish: (String?) -> Void = { [weak self] text in
+            guard let self = self, !finished else { return }
+            finished = true
+            self.engine.stop()
+            self.engine.inputNode.removeTap(onBus: 0)
+            request.endAudio()
+            self.listening = false
+            self.statusItem.button?.title = "Mek"
+            if let text = text, !text.isEmpty { self.send(text, spoken: true) }
+        }
+        var best = ""
+        recognizer.recognitionTask(with: request) { result, error in
+            if let result = result { best = result.bestTranscription.formattedString }
+            if (result?.isFinal ?? false) || error != nil { DispatchQueue.main.async { finish(best) } }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { finish(best) }
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
 
-    private func send(_ command: String) {
+    private func send(_ command: String, spoken: Bool = false) {
         guard !commandInProgress else {
             showResult("Mek önceki komutu tamamlıyor; lütfen birkaç saniye sonra yeniden deneyin.")
             return
@@ -111,9 +168,26 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
             DispatchQueue.main.async {
                 self?.commandInProgress = false
-                self?.showResult(result)
+                if command.hasPrefix("söyle ") {
+                    return
+                } else if result.contains("`mek onay`") {
+                    self?.askConfirmation(result)
+                } else {
+                    self?.showResult(result)
+                    if spoken { self?.send("söyle " + result) }
+                }
             }
         }
+    }
+
+    /// Onay gerektiren eylemler yalnızca burada, sizin tıklamanızla çalışır.
+    private func askConfirmation(_ text: String) {
+        let alert = NSAlert()
+        alert.messageText = "Mek onayınızı istiyor"
+        alert.informativeText = text.replacingOccurrences(of: " Onaylamak için `mek onay`, vazgeçmek için `mek iptal` yazın.", with: "")
+        alert.addButton(withTitle: "Onayla")
+        alert.addButton(withTitle: "Vazgeç")
+        send(alert.runModal() == .alertFirstButtonReturn ? "onay" : "iptal")
     }
 
     private func showResult(_ text: String) {

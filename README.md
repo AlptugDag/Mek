@@ -37,6 +37,12 @@ Mek aşağıdaki durumlarda kendiliğinden konuşur:
 Söyleyeceği cümleleri **Apple Intelligence**, cihaz üzerinde doğal Türkçeye çevirir; internet ya da API anahtarı gerekmez.
 Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı bir süreçte üretilir, bu yüzden konuşma bitince bellek tamamen boşalır.
 
+## Asistan (serbest sohbet)
+- **Araç tabanlı:** Model komut çalıştırmaz, yalnızca tanımlı araçlardan birini seçer. Okuma araçları serbest, geri alınabilir eylemler (temizlik, sessize alma, süreci verimlilik çekirdeğine alma) otomatik, geri alınamaz olanlar sizin onayınızla çalışır. Her eylem `mek günlük`te "Asistan" etiketiyle görünür.
+- **Cihaz üzerinde:** Varsayılan Apple Intelligence'tır; veri Mac'ten çıkmaz. Boşta hiçbir model çalışmaz, yalnızca soru gelince uyanır.
+- **İsteğe bağlı Gemini:** Apple Intelligence yetmezse ya da soruya `derin` ile başlarsanız Gemini kullanılır. Bunun için `~/.jarvis/jarvis.json` içine `"gemini_api_key": "..."` ekleyin (`chmod 600`; isteğe bağlı `"gemini_model"`). Gemini'ye yalnızca sorunuz, kısa durum özeti ve araç çıktıları gönderilir. Anahtar yoksa bulut hiç kullanılmaz.
+- **Sesle sorma:** Mikrofon sürekli dinlemez; yalnızca menüdeki "Sesle sor" tıklanınca en fazla 8 saniye açılır, çözümleme cihaz üzerinde yapılır.
+
 ## Performans
 - **Kurgu sırasında:** Premiere, After Effects, Resolve, Topaz veya Media Encoder açıldığında devreye girer.
   - Bu uygulamaları en yüksek önceliğe alır.
@@ -115,6 +121,10 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 - `mek güç koruma`: otomatik UPS kapatmanın açık/kapalı durumunu gösterir
 - `mek temizle [derin]`: temizliği elle başlatır
 - `mek disk`: disk SMART durumunu gösterir
+- `mek sor <soru>` ya da doğrudan `mek bilgisayar neden yavaş?`: serbest Türkçe soru. Mek ölçer, tanımlı araçlarla eyleme geçer ve cevaplar. Menü çubuğunda "Mek'e sor veya komut ver…" ve "Sesle sor" öğeleri de var.
+- `mek onay` / `mek iptal`: onay gerektiren eylemleri (uygulama kapatma, güncelleme kurma, reklam engeli, karantinadan geri alma) siz onaylar ya da reddedersiniz; model kendi kendine onay veremez.
+- `mek karantina`: karantinaya alınanları numaralı listeler; `mek karantina geri <no>` yanlış alarmı yerine koyar ve bir daha şüpheli saymaz
+- `mek günlük [adet]`: Mek'in son kendiliğinden eylemleri (söyledikleri, arka plana aldığı süreçler, karantina, güncelleme)
 - `mek ağ`: arayüz durumu, yaklaşık trafik ve ping kalitesini gösterir
 - `mek ağ test`: isteğe bağlı aktif indirme/yükleme kalite testi
 - `mek güncelle kontrol`: Apple, Homebrew ve varsa Mac App Store güncellemelerini listeler
