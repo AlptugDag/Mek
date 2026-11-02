@@ -141,20 +141,33 @@ def _proc_scan():
     return pro, render, mem[:8], hot
 
 
+_slow = {}  # ad -> (zaman, değer): pahalı alt süreç sorguları her turda çalışmasın
+
+
+def _cached(key, ttl, fn):
+    now = time.monotonic()
+    hit = _slow.get(key)
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    val = fn()
+    _slow[key] = (now, val)
+    return val
+
+
 def snapshot(events=None):
     s = Snapshot()
     s.t = time.time()
     s.front = frontmost_app()
     s.idle = idle_seconds()
     s.cpu = psutil.cpu_percent(interval=None)
-    s.gpu = gpu_utilization()
+    s.gpu = _cached("gpu", 30, gpu_utilization)
     vm = psutil.virtual_memory()
     s.mem_pct = vm.percent
     s.swap_gb = psutil.swap_memory().used / 1024 ** 3
     st = os.statvfs("/System/Volumes/Data")
     s.disk_free_gb = st.f_bavail * st.f_frsize / 1024 ** 3
     s.pro_pids, s.render_cpu, s.top_mem, s.hot = _proc_scan()
-    s.apps = running_app_names()
+    s.apps = _cached("apps", 60, running_app_names)
     s.thermal = thermal_state()
     if events:
         events.publish("system.snapshot", snapshot=s)

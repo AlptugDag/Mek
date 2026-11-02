@@ -8,11 +8,11 @@ command -v brew >/dev/null && { brew list clamav >/dev/null 2>&1 || brew install
 CONF=/opt/homebrew/etc/clamav/freshclam.conf
 [ -f "$CONF" ] || sed 's/^Example/#Example/' "$CONF.sample" > "$CONF"
 mkdir -p "$J/jarvisd" "$J/ai" "$J/state" "$J/legacy" "$BIN" "$LA"
-cp "$SRC"/jarvisd/* "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
+cp "$SRC"/jarvisd/*.py "$SRC"/jarvisd/*.sh "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
 cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh"
 ln -sf jarvis "$BIN/mek"
 swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
-swiftc -O "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar"
+swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar"
 [ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
 for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek mek.ui; do
