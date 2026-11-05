@@ -6,48 +6,102 @@ Kural: kaynak, gerçekten iş yapan uygulamaya. Bir kurgu uygulamasının yalnı
 
 Profiller:
   performance  - kurgu/fotoğraf uygulaması önde ya da render sürüyor: o uygulama arka plan kısıtından
-                 çıkarılır, eşitleme/güncelleme ajanları E-çekirdeklere alınır ya da durdurulur.
-                 Render sürüyorsa sistem uykuya geçmez (ekran uyuyabilir).
-  ready        - kurgu uygulaması açık ama arka planda boşta: hiçbir şey zorlanmaz, macOS (App Nap,
-                 bellek sıkıştırma) kendi işini yapar; ajanlar durdurulmuş kalır.
-  normal       - kurgu uygulaması yok: her şey eski haline döner.
-Mek her süreç için taskpolicy'yi yalnızca bir kez çağırır (eskiden her 10-15 saniyede onlarca alt süreç
-açılıyordu). Ayrıcalıklı adımlar (pmset, sistem daemon'ları) yalnızca install_privileged.sh ile kurulmuş
-/usr/local/libexec/mek-priv yardımcısı varsa yapılır.
+                 çıkarılır (8 P-çekirdeğin tamamı ona verilir), arka planda boşta bekleyen diğer
+                 ağır uygulamalar ve tüm eklenti/eşitleme süreçleri (CEPHtmlEngine vb.) E-çekirdeklere
+                 park edilir. Render sürüyorsa sistem uykuya geçmez (ekran uyuyabilir).
+  ready        - kurgu uygulaması açık ama arka planda boşta: boşta bekleyen ağır uygulamalar E-çekirdekte
+                 ve App Nap altında sessizce bekler; sistem kaynaklarını sömürmez.
+  normal       - kurgu uygulaması yok: her şey eski haline döner, yetim yardımcı süreçler temizlenir.
 """
 import logging
 import os
 import re
+import signal
 import subprocess
+import threading
 import time
 
 import psutil
 
-from config import CLEANER, MASTER_SETUP, PRIV_HELPER, STATE_DIR
+from config import CLEANER, CREATIVE_BUNDLE_PATTERN, MASTER_SETUP, PRIV_HELPER, PRO_APP_PATTERN, STATE_DIR
+import context as ctx
 
 log = logging.getLogger("mek.services")
 UID = os.getuid()
 
-BG_CLAMP = re.compile(r"spotlightknowledged|mds_stores|photoanalysisd|mediaanalysisd|"
-                      r"IntelligencePlatformComputeService|SetStoreUpdateService")
-PERF_CLAMP = re.compile(r"Camera Hub|ACCFinderSync|Core Sync|CCLibrary|Creative Cloud Helper|"
-                        r"GoogleUpdater|Dropbox|OneDrive|Google Drive|bird|cloudd")
-RENDER_CPU = 150.0     # bir kurgu süreci bu kadar CPU harcıyorsa "iş yapıyor" sayılır
-IDLE_GRACE_S = 180     # önden çekildikten sonra performans kipinde kalma süresi
+# Kurgu uygulamaları ve senkron Mach IPC yardımcıları (CEPHtmlEngine, dynamiclinkmanager, AdobeIPCBroker):
+# Bunlar ASLA taskpolicy -b (DARWIN_BG) altına alınmaz; aksi halde Premiere timeline kilidi (BE::WriteMutex)
+# öncelik tersinmesi (priority inversion) nedeniyle takılır!
+CREATIVE_PROTECT_RE = re.compile(
+    f"({CREATIVE_BUNDLE_PATTERN})|({PRO_APP_PATTERN})|"
+    r"CEPHtmlEngine|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub|PProHeadless|aerender"
+)
+CREATIVE_IPC_RE = re.compile(
+    r"CEPHtmlEngine|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub"
+)
+
+# Her zaman E-çekirdeklere (arka plan QoS) sabitlenecek sistem indeksleme süreçleri.
+# Not: WallpaperMacintoshExtension koşulsuz öldürülürse macOS 27'de WallpaperAgent %110+ CPU döngüsüne girer;
+# bu yüzden öldürmek yerine E-çekirdeklere sabitlenir, yalnızca CPU kaçarsa yeniden başlatılır.
+BG_CLAMP = re.compile(
+    r"spotlightknowledged|mds_stores|photoanalysisd|mediaanalysisd|"
+    r"IntelligencePlatformComputeService|SetStoreUpdateService|"
+    r"WallpaperAgent|WallpaperMacintoshExtension|WallpaperVideoExtension"
+)
+
+# Kurgu IPC'sine katılmayan Creative Cloud arka plan eşitleyicileri ve bulut servisleri:
+BLOAT_CLAMP = re.compile(
+    r"CCXProcess|Creative Cloud Content Manager|Creative Cloud Helper|"
+    r"Core Sync|ACCFinderSync|CCLibrary|Adobe Crash Processor|CRLogTransport|"
+    r"Adobe Desktop Service|crashpad_handler|Red Giant|Maxon|Camera Hub|GoogleUpdater|"
+    r"Dropbox|OneDrive|Google Drive|bird|cloudd|photolibraryd|cloudphotod"
+)
+
+PERF_CLAMP = BLOAT_CLAMP
+
+# Ana Adobe/kurgu uygulamaları kapandıktan sonra bellekte asılı kalabilen yetim süreçler
+ADOBE_MAIN_RE = re.compile(
+    r"Contents/MacOS/(Adobe Premiere Pro|After Effects|Adobe Media Encoder|Adobe Photoshop|"
+    r"Adobe Audition|Adobe Illustrator|Adobe Lightroom)"
+)
+ORPHAN_HELPERS_RE = re.compile(
+    r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|AI MACHINE Server|Adobe Crash Processor|CRLogTransport"
+)
+
+# Arka planda gerçek render/dışa aktarma motorları
+RENDER_ENGINE_RE = re.compile(
+    r"PProHeadless|Adobe Media Encoder|aerender|AEGPUSniffer|Topaz Video.*/(ffmpeg|neuroserver)|Compressor"
+)
+
+RENDER_CPU = 280.0     # 10 çekirdekli M1 Max'te çok çekirdekli gerçek render eşiği (boşta CEP spin'i ~150%'dir)
+IDLE_GRACE_S = 45      # önden çekildikten sonra performans kipinde kalma süresi
+BG_PARK_DELAY_S = 12   # arka plana düşen boşta kurgu uygulamasını E-çekirdeğe park etme gecikmesi
+PURGE_COOLDOWN_S = 180 # iki otomatik RAM önbellek temizliği (purge) arası en az süre
 
 
 def _run(cmd, **kw):
     return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, **kw)
 
 
-def _pids(rx):
+def _iter_procs(snap=None):
+    """Varsa snapshot içindeki tek geçişli süreç listesini kullanır; yoksa psutil ile tarar."""
+    if snap is not None and getattr(snap, "procs", None):
+        return snap.procs
     out = []
-    for p in psutil.process_iter(["pid", "name", "exe"]):
+    for p in psutil.process_iter(["pid", "name", "exe", "cpu_percent"]):
         try:
-            if rx.search(p.info["exe"] or p.info["name"] or ""):
-                out.append(p.info["pid"])
+            info = p.info
+            out.append((info["pid"], info.get("name") or "", info.get("exe") or "", info.get("cpu_percent") or 0.0, 0))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
+    return out
+
+
+def _pids(rx, snap=None):
+    out = []
+    for pid, name, cmd, _, _ in _iter_procs(snap):
+        if rx.search(cmd or name or ""):
+            out.append(pid)
     return out
 
 
@@ -67,6 +121,13 @@ def app_of(exe):
     return m.group(1) if m else os.path.basename(exe or "")
 
 
+def _renice_safe(pid, nice_val):
+    try:
+        os.setpriority(os.PRIO_PROCESS, pid, nice_val)
+    except OSError:
+        pass
+
+
 class ServiceManager:
     def __init__(self, cfg, events=None):
         self.cfg = cfg
@@ -75,52 +136,175 @@ class ServiceManager:
         self.caff = None
         self.stopped_agents = []
         self.last_active = 0.0
-        self.boosted = set()      # arka plan kısıtından çıkarılan kurgu süreçleri
-        self.clamped = set()      # E-çekirdeğe alınan eşitleme/güncelleme süreçleri
-        self.bg_clamped = set()
+        self.boosted = set()          # Tam öncelikteki (nice 0, Tier-0 I/O) aktif kurgu süreçleri
+        self.parked_pro = set()       # Arka planda boşta bekleyen ikincil kurgu süreçleri (DARWIN_BG'ye sokulmaz, nice +4)
+        self.pro_last_active = {}     # pid -> son aktif (önde/render) zamanı
+        self.unthrottled_ipc = set()  # DARWIN_BG'den çıkarıldığı doğrulanmış kurgu IPC/CEP yardımcıları
+        self.clamped = set()          # E-çekirdeğe alınan bulut/eşitleme süreçleri
+        self.bg_clamped = set()       # E-çekirdeğe alınan sistem indeksleme süreçleri
         self.next_guard = 0.0
+        self.last_adobe_seen = time.time()
+        self.last_purge = 0.0
+        self.last_front_pro = None
         self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
         priv("restore-high-power")
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # --- dakikada bir ------------------------------------------------------------
-    def guard(self):
-        alive = set()
-        for p in psutil.process_iter(["pid", "name", "exe"]):
+    # --- yardımcı QoS işlemleri ---------------------------------------------------
+    def _unpark_pro(self, pid):
+        """Kurgu sürecini arka plan kısıtından çıkarır ve tam P-çekirdek/G-Ç önceliği (Tier-0) verir."""
+        if pid in self.parked_pro or pid not in self.boosted:
+            _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+            self.parked_pro.discard(pid)
+            self.boosted.add(pid)
+            log.info("Kurgu süreci tam performansa alındı (P-çekirdek, Tier-0 I/O): pid=%d", pid)
+
+    def _park_pro(self, pid, name=""):
+        """Arka planda boşta duran kurgu sürecini 'hazır/beklemede' olarak işaretler.
+        ÖNEMLİ: Kurgu süreçlerine ASLA taskpolicy -b (PRIO_DARWIN_BG) veya pozitif nice uygulanmaz;
+        macOS'ta root olmadan nice değeri geri düşürülemez ve DARWIN_BG Mach IPC öncelik tersinmesine yol açar."""
+        if pid not in self.parked_pro:
+            if pid not in self.boosted:
+                _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+            self.boosted.discard(pid)
+            self.parked_pro.add(pid)
+            log.info("Arka planda boşta bekleyen kurgu süreci bekleme kipine alındı: %s (pid=%d)",
+                     name or "pro", pid)
+
+    def smart_purge(self, reason="bellek baskısı"):
+        """İnaktif dosya önbelleğini (Pages inactive) hız sınırlamalı olarak temizler."""
+        now = time.time()
+        if now - self.last_purge < PURGE_COOLDOWN_S:
+            return False
+        self.last_purge = now
+
+        def _do():
+            if priv("purge"):
+                log.info("Akıllı RAM önbellek temizliği (purge) tamamlandı (%s).", reason)
+
+        threading.Thread(target=_do, daemon=True).start()
+        return True
+
+    def cleanup_orphans(self, snap=None, force=False):
+        """Ana Adobe uygulamaları kapalıyken bellekte asılı kalan yetim yardımcı süreçleri temizler.
+        Herhangi bir Adobe ana uygulaması açıksa (force=True olsa dahi) yardımcı süreçlere dokunulmaz!"""
+        procs = _iter_procs(snap)
+        now = time.time()
+        adobe_open = any(ADOBE_MAIN_RE.search(cmd or name or "") for _, name, cmd, _, _ in procs)
+        if adobe_open:
+            self.last_adobe_seen = now
+            return 0
+        if not force and (now - self.last_adobe_seen < 30):
+            return 0
+        killed = 0
+        for pid, name, cmd, _, _ in procs:
+            target = cmd or name or ""
+            if ORPHAN_HELPERS_RE.search(target) and not ADOBE_MAIN_RE.search(target):
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                    killed += 1
+                except OSError:
+                    pass
+        if killed:
+            log.info("Kapalı uygulamalardan kalan %d yetim yardımcı süreç temizlendi.", killed)
+        return killed
+
+    # --- anlık uygulama geçişi (MekMenuBar NSWorkspace bildirimiyle <20ms) -------
+    def on_focus_change(self, pid, app_name, snap=None):
+        """Kullanıcı Cmd+Tab ile uygulama değiştirdiğinde anında çağrılır."""
+        now = time.time()
+        front_lower = (app_name or "").lower()
+        ctx.set_front_override(pid, app_name)
+        if snap is not None:
+            snap.front = app_name
+            snap.front_pid = pid
+
+        pro_procs = getattr(snap, "pro_procs", ()) if snap is not None else ()
+        focused_is_pro = False
+        for ppid, exe, cpu, _ in pro_procs:
+            pname = app_of(exe).lower()
+            is_this_front = (ppid == pid) or (front_lower and (front_lower in pname or pname in front_lower))
+            if is_this_front:
+                focused_is_pro = True
+                self.pro_last_active[ppid] = now
+                self._unpark_pro(ppid)
+            else:
+                # Önden çekilen diğer kurgu uygulaması render yapmıyorsa ikincil önceliğe al
+                is_rendering = (cpu >= RENDER_CPU) or bool(RENDER_ENGINE_RE.search(exe) and cpu >= 50.0)
+                if not is_rendering:
+                    self._park_pro(ppid, app_of(exe))
+
+        if focused_is_pro:
+            if self.last_front_pro and self.last_front_pro != front_lower and snap is not None:
+                # Bir ağır kurgu uygulamasından diğerine geçildi: bellek/takas yüksekse önbelleği rahatlat
+                if getattr(snap, "mem_pct", 0) >= 75 or getattr(snap, "pressure", 1) >= 2 or getattr(snap, "swap_gb", 0) >= 1.0:
+                    self.smart_purge(f"{self.last_front_pro} -> {front_lower} geçişi")
+            self.last_front_pro = front_lower
+
+    # --- 30 saniyede bir ---------------------------------------------------------
+    def guard(self, snap=None):
+        alive_bg = set()
+        alive_bloat = set()
+        alive_ipc = set()
+        for pid, name, cmd, cpu, _ in _iter_procs(snap):
             try:
-                name = p.info["name"] or ""
-                if "WallpaperMacintoshExtension" in name:
-                    p.kill()
-                elif name == "siriactionsd" and p.cpu_percent(interval=None) > 80:
-                    p.kill()
-                elif BG_CLAMP.search(p.info["exe"] or name):
-                    alive.add(p.pid)
-                    if p.pid not in self.bg_clamped:
-                        _run(["/usr/sbin/taskpolicy", "-b", "-p", str(p.pid)])
-            except (psutil.NoSuchProcess, psutil.AccessDenied, ValueError):
+                target = cmd or name or ""
+                if ("WallpaperMacintoshExtension" in name or name == "siriactionsd") and cpu > 80.0:
+                    os.kill(pid, signal.SIGKILL)
+                    continue
+                # Kurgu paketleri ve senkron Mach IPC yardımcıları (CEPHtmlEngine, dynamiclinkmanager vb.)
+                # kesinlikle kısıtlanmaz; aksine kısıttan çıkarılır!
+                if CREATIVE_PROTECT_RE.search(target):
+                    if CREATIVE_IPC_RE.search(target):
+                        alive_ipc.add(pid)
+                        if pid not in self.unthrottled_ipc:
+                            _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+                            _renice_safe(pid, 0)
+                    continue
+                if BG_CLAMP.search(target):
+                    alive_bg.add(pid)
+                    if pid not in self.bg_clamped:
+                        _run(["/usr/sbin/taskpolicy", "-b", "-p", str(pid)])
+                if BLOAT_CLAMP.search(target):
+                    alive_bloat.add(pid)
+                    if pid not in self.clamped:
+                        _run(["/usr/sbin/taskpolicy", "-b", "-p", str(pid)])
+                        _renice_safe(pid, 15)
+            except (OSError, ValueError):
                 pass
-        self.bg_clamped = alive
+        self.bg_clamped = alive_bg
+        self.clamped = alive_bloat
+        self.unthrottled_ipc = alive_ipc
+        self.cleanup_orphans(snap)
 
     # --- her döngüde -------------------------------------------------------------
     @staticmethod
     def working_pids(snap):
-        """Gerçekten iş yapan kurgu süreçleri: öndeki uygulamaya ait olanlar ya da yüksek CPU harcayanlar."""
+        """Gerçekten iş yapan kurgu süreçleri: öndeki uygulamaya ait olanlar ya da aktif render yapanlar."""
         front = (snap.front or "").lower()
+        front_pid = getattr(snap, "front_pid", None)
         out = []
         for pid, exe, cpu, _ in getattr(snap, "pro_procs", ()):
             name = app_of(exe).lower()
-            if cpu >= RENDER_CPU or pid == getattr(snap, "front_pid", None) or (front and front in name):
+            is_front = (pid == front_pid) or bool(front and (front in name or name in front))
+            is_render_engine = bool(RENDER_ENGINE_RE.search(exe)) and cpu >= 50.0
+            if is_front or is_render_engine or cpu >= RENDER_CPU:
                 out.append(pid)
         return out
 
     def tick(self, snap, rendering=False):
         now = time.time()
         if now >= self.next_guard:
-            self.next_guard = now + 60
-            self.guard()
+            self.next_guard = now + 30
+            self.guard(snap)
+
         working = self.working_pids(snap)
+        working_set = set(working)
+        for pid in working_set:
+            self.pro_last_active[pid] = now
+
         if working or rendering:
             self.last_active = now
         if working or rendering or (self.profile == "performance" and now - self.last_active < IDLE_GRACE_S):
@@ -129,22 +313,32 @@ class ServiceManager:
             target = "ready"
         else:
             target = "normal"
+
         if target != self.profile:
             {"performance": self.enter_performance, "ready": self.enter_ready,
              "normal": self.enter_normal}[target]()
-        if target == "performance":
-            for pid in working:
-                if pid not in self.boosted:
-                    _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
-                    self.boosted.add(pid)
-            if now >= getattr(self, "_next_clamp", 0):
-                self._next_clamp = now + 60
-                for pid in _pids(PERF_CLAMP):
-                    if pid not in self.clamped:
-                        _run(["/usr/sbin/taskpolicy", "-b", "-p", str(pid)])
-                        self.clamped.add(pid)
+
+        # Aktif (öndeki veya render yapan) kurgu süreçlerini P-çekirdeklere aç,
+        # arka planda boşta bekleyen kurgu süreçlerini ise E-çekirdeklere park et!
+        for pid, exe, cpu, _ in getattr(snap, "pro_procs", ()):
+            if pid in working_set:
+                self._unpark_pro(pid)
+            else:
+                last_act = self.pro_last_active.get(pid, 0.0)
+                # Başka bir kurgu uygulaması öndeyse hemen, değilse BG_PARK_DELAY_S sonra E-çekirdeğe park et
+                if working_set or (now - last_act >= BG_PARK_DELAY_S):
+                    self._park_pro(pid, app_of(exe))
+
+        # Bellek baskısı veya yüksek takas varsa ve son temizlikten beri süre geçtiyse önbelleği boşalt
+        if snap.pro_pids and (getattr(snap, "pressure", 1) >= 2 or getattr(snap, "swap_gb", 0) >= 2.0):
+            self.smart_purge("bellek/takas baskısı")
+
         live = set(snap.pro_pids)
         self.boosted &= live
+        self.parked_pro &= live
+        for dead in set(self.pro_last_active) - live:
+            self.pro_last_active.pop(dead, None)
+
         # Uyku engeli yalnızca render sürerken (ekran uyuyabilir; siz başındayken zaten uyumaz)
         if self.caff and self.caff.poll() is not None:
             self.caff = None
@@ -179,7 +373,6 @@ class ServiceManager:
     def enter_ready(self):
         previous, self.profile = self.profile, "ready"
         self._publish("ready")
-        self._release_clamps()
         self._stop_agents()
         if previous == "normal":
             priv("perf")
@@ -197,15 +390,13 @@ class ServiceManager:
             self.caff = None
         self._release_clamps()
         self.boosted = set()
+        self.parked_pro = set()
+        self.last_front_pro = None
         for plist in self.stopped_agents:
             _run(["/bin/launchctl", "bootstrap", f"gui/{UID}", plist])
         self.stopped_agents = []
-        # Premiere/AE kapandıysa artık sunucuları temizle
-        for pid in _pids(re.compile(r"AI MACHINE Server")):
-            try:
-                psutil.Process(pid).kill()
-            except Exception:
-                pass
+        # Premiere/AE/Photoshop kapandıysa yetim yardımcı süreçleri temizle
+        self.cleanup_orphans(force=True)
         priv("normal")
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

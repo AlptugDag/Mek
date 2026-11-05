@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/mek.png" width="160" alt="Mek Logo">
+</p>
+
 <h1 align="center">Mek</h1>
 
 <p align="center">
@@ -50,12 +54,16 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 
 ## Dinamik Bellek Bütçesi ve Kurgu Optimizasyonu
 - **Akıllı Kaynak Dağıtımı:** Premiere Pro, Photoshop, DaVinci Resolve ve Topaz Video gibi ağır uygulamalar aynı anda açık olsa bile bilgisayarın kasmaması için bellek bütçesi (`memory_budget.py`) açık uygulama sayısına göre otomatik kalibre edilir. Hiçbir uygulama tek başına tüm RAM'i işgal edip sistemi takas (swap) krizine sokamaz.
-- **Akıllı App Nap:** Yaratıcı uygulamalar arka planda boşta beklerken macOS App Nap mekanizması çalışır; böylece arka plandaki programlar ön plandaki çalışmanızı yavaşlatmaz. Yalnızca önde aktif kullanılırken veya arka planda render/dışa aktarma sürerken en yüksek performans önceliği verilir.
-- **Bellek Rahatlatma (Memory Relief):** Sistem genelinde bellek baskısı yükseldiğinde, inaktif önbellekler anında temizlenir (`purge`). Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
+- **Sıfır Gecikmeli (<15 ms) Odak Geçişi ve E-Çekirdek Parkı:** Menü çubuğu uygulaması macOS `NSWorkspace` uygulama geçişlerini anında yakalar ve yerel Unix soketi üzerinden servise bildirir. `Cmd+Tab` ile Premiere Pro, Photoshop veya Topaz arasında geçiş yaptığınız anda:
+  - Öne gelen uygulama anında arka plan kısıtından çıkarılır ve tüm **8 Performans çekirdeği (P-core)** ile en yüksek G/Ç önceliği ona tahsis edilir.
+  - Arka planda kalan ve o an aktif render yapmayan diğer ağır uygulamalar **Verimlilik çekirdeklerine (E-core)** ve arka plan G/Ç katmanına park edilir; böylece boşta çalışan kurgu uygulamaları ön plandaki çalışmanızdan P-çekirdeği veya bellek bant genişliği çalamaz.
+- **Adobe CEP / Eklenti ve Eşitleme Dizginleme:** Premiere Pro ve After Effects'in arka planda açtığı onlarca `CEPHtmlEngine` (Chromium eklenti paneli), `AdobeIPCBroker`, `CCXProcess` ve `Core Sync` süreci otomatik olarak Verimlilik çekirdeklerine (`taskpolicy -b`) ve düşük önceliğe (`nice +15`) sabitlenir.
+- **Sıfır Sömürü (Non-Parasitic Tarama):** Süreçlerin değişmeyen yol/argüman bilgileri `(pid, create_time)` anahtarıyla önbelleklenir ve tüm modüller tek geçişli anlık görüntüyü paylaşır (`<%0.3` CPU tüketimi).
+- **Bellek Rahatlatma (Memory Relief):** Uygulamalar arası geçişte veya bellek baskısı yükseldiğinde inaktif dosya önbelleği (`purge`) otomatik temizlenir. Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
 
-## Çökme Yönetimi (Sessiz ve Eyleme Dayalı)
+## Çökme Yönetimi ve Yetim Süreç Temizliği (Sessiz ve Otonom)
 - **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.
-- **Otomatik Arka Plan Bakımı:** Çökme raporları sessizce `crash_reports.json` içine işlenir. Bir süreç sürekli çökme döngüsüne girerse geçici kilit/önbellek dosyaları otomatik temizlenir. Kullanıcı dilediğinde `mek çökmeler` yazarak özeti metin olarak görebilir.
+- **Otonom Onarım ve Yetim Temizliği:** Çökme raporları sessizce `crash_reports.json` içine işlenir. Ana Adobe/kurgu uygulamaları kapandığında veya çöktüğünde bellekte asılı kalan yetim `CEPHtmlEngine`, `dynamiclinkmanager`, `AdobeQTServer`, `AI MACHINE Server` ve `Adobe Crash Processor` süreçleri ile geçici `.lock` dosyaları otomatik temizlenir. Kullanıcı dilediğinde `mek çökmeler` yazarak özeti metin olarak görebilir.
 
 ## Soru-Cevap Mekanizması ve Siri Entegrasyonu
 - **Net Seçenekler:** Mek bir konuda karar gerektiğinde açık seçeneklerle sorar (örn. `kapat` / `dokunma`). Seçenekler seslendirilir ve anlaşılır yanıt beklenir.

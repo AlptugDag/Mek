@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Darwin
 import Foundation
 import Speech
 
@@ -9,11 +10,14 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     private var commandInProgress = false
     private let engine = AVAudioEngine()
     private var listening = false
+    private var appIcon: NSImage?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        loadBrandIcon()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "Mek"
+        configureStatusButton(suffix: "")
 
         let menu = NSMenu()
         add("Brifing", to: menu, action: #selector(runBriefing))
@@ -29,7 +33,91 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         add("Mek'i kapat", to: menu, action: #selector(quit))
         statusItem.menu = menu
+
+        startWorkspaceObserver()
         startQuestionPolling()
+    }
+
+    private func loadBrandIcon() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let candidates = [
+            home.appendingPathComponent(".jarvis/mek.png").path,
+            home.appendingPathComponent(".jarvis/Mek.icns").path
+        ]
+        for path in candidates {
+            if let img = NSImage(contentsOfFile: path) {
+                appIcon = img
+                NSApp.applicationIconImage = img
+                DispatchQueue.global(qos: .utility).async {
+                    for target in [".jarvis", ".jarvis/mek-menubar", ".local/bin/jarvis"] {
+                        let p = home.appendingPathComponent(target).path
+                        NSWorkspace.shared.setIcon(img, forFile: p)
+                    }
+                }
+                break
+            }
+        }
+    }
+
+    private func configureStatusButton(suffix: String) {
+        guard let button = statusItem.button else { return }
+        if let icon = appIcon?.copy() as? NSImage {
+            icon.size = NSSize(width: 18, height: 18)
+            icon.isTemplate = false
+            button.image = icon
+            button.imagePosition = .imageLeading
+            button.title = suffix.isEmpty ? " Mek" : " Mek \(suffix)"
+        } else {
+            button.title = suffix.isEmpty ? "Mek" : "Mek \(suffix)"
+        }
+    }
+
+    /// Ön plandaki uygulama değiştiğinde (<15 ms) doğrudan Unix soketi üzerinden Mek servisine haber verir.
+    /// Böylece Premiere Pro, Photoshop ve Topaz arasında geçiş yapıldığı anda P-çekirdek / E-çekirdek
+    /// öncelikleri hiçbir alt süreç (nc vb.) açılmadan sıfır gecikmeyle güncellenir.
+    private func startWorkspaceObserver() {
+        let nc = NSWorkspace.shared.notificationCenter
+        nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
+            guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
+            let pid = app.processIdentifier
+            let name = app.localizedName ?? ""
+            guard pid > 0, !name.isEmpty else { return }
+            self?.sendSilent("odak \(pid) \(name)")
+        }
+    }
+
+    private nonisolated func sendSilent(_ command: String) {
+        let socketPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".jarvis/jarvis.sock").path
+        DispatchQueue.global(qos: .userInteractive).async {
+            let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+            guard fd >= 0 else { return }
+            defer { Darwin.close(fd) }
+
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            let pathBytes = socketPath.utf8CString
+            let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
+            guard pathBytes.count <= maxLen else { return }
+            withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+                ptr.withMemoryRebound(to: CChar.self, capacity: maxLen) { dst in
+                    for i in 0..<pathBytes.count {
+                        dst[i] = pathBytes[i]
+                    }
+                }
+            }
+            let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
+            let connected = withUnsafePointer(to: &addr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                    Darwin.connect(fd, sa, addrLen)
+                }
+            }
+            guard connected == 0 else { return }
+            let payload = Array((command + "\n").utf8)
+            _ = payload.withUnsafeBytes { buf in
+                Darwin.write(fd, buf.baseAddress, buf.count)
+            }
+        }
     }
 
     private var lastPromptedQuestionId: String? = nil
@@ -43,6 +131,14 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func makeAlert() -> NSAlert {
+        let alert = NSAlert()
+        if let icon = appIcon {
+            alert.icon = icon
+        }
+        return alert
+    }
+
     private func checkPendingQuestion() {
         let path = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".jarvis/state/pending_question.json").path
@@ -53,16 +149,16 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
               let options = json["options"] as? [[String: String]] else {
             if lastPromptedQuestionId != nil {
                 lastPromptedQuestionId = nil
-                statusItem.button?.title = "Mek"
+                configureStatusButton(suffix: "")
             }
             return
         }
 
-        statusItem.button?.title = "Mek ❓"
+        configureStatusButton(suffix: "❓")
         guard lastPromptedQuestionId != qid else { return }
         lastPromptedQuestionId = qid
 
-        let alert = NSAlert()
+        let alert = makeAlert()
         alert.messageText = "Mek Soruyor"
         alert.informativeText = text
         for opt in options {
@@ -110,7 +206,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     }
 
     @objc private func promptForCommand() {
-        let alert = NSAlert()
+        let alert = makeAlert()
         alert.messageText = "Mek'e sorun veya komut verin"
         alert.informativeText = "Örnek: bilgisayar neden yavaş? · temizle · derin: bu hafta ne yaptın?"
         alert.addButton(withTitle: "Gönder")
@@ -158,7 +254,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             return
         }
         listening = true
-        statusItem.button?.title = "Mek 🎙"
+        configureStatusButton(suffix: "🎙")
         var finished = false
         let finish: (String?) -> Void = { [weak self] text in
             guard let self = self, !finished else { return }
@@ -167,7 +263,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             self.engine.inputNode.removeTap(onBus: 0)
             request.endAudio()
             self.listening = false
-            self.statusItem.button?.title = "Mek"
+            self.configureStatusButton(suffix: "")
             if let text = text, !text.isEmpty { self.send(text, spoken: true) }
         }
         var best = ""
@@ -231,7 +327,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
     /// Onay gerektiren eylemler yalnızca burada, sizin tıklamanızla çalışır.
     private func askConfirmation(_ text: String) {
-        let alert = NSAlert()
+        let alert = makeAlert()
         alert.messageText = "Mek onayınızı istiyor"
         alert.informativeText = text.replacingOccurrences(of: " Onaylamak için `mek onay`, vazgeçmek için `mek iptal` yazın.", with: "")
         alert.addButton(withTitle: "Onayla")
@@ -240,7 +336,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     }
 
     private func showResult(_ text: String) {
-        let alert = NSAlert()
+        let alert = makeAlert()
         alert.messageText = "Mek"
         alert.informativeText = text
         alert.addButton(withTitle: "Tamam")

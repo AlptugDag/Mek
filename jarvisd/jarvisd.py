@@ -39,6 +39,7 @@ from events import EventBus
 from network_optimizer import NetworkOptimizer
 from agent import Agent
 from security import Security
+import services
 from services import ServiceManager
 from memory_budget import MemoryBudget
 from questions import QuestionBox, Question, Option, ai_classifier
@@ -124,13 +125,24 @@ class Mek:
         self._handle_crash_silently(name, report)
 
     def _handle_crash_silently(self, name, report):
+        import glob
         crashes = self.__dict__.setdefault("_crash_counts", {})
         now = time.time()
         counts = [t for t in crashes.get(name, []) if now - t < 86400] + [now]
         crashes[name] = counts
-        if len(counts) >= 5:
-            log.warning("Süreç %s son 24 saatte %d kez çöktü; geçici dosyalar temizleniyor.", name, len(counts))
-            import glob
+        # Çökme sonrası asılı kalabilecek Adobe/kurgu kilit ve yetim süreçlerini sessizce temizle
+        if hasattr(self, "services") and self.services:
+            self.services.cleanup_orphans(getattr(self, "snap", None))
+        for pat in [f"/tmp/*{name}*.lock", f"/private/tmp/*{name}*.lock"]:
+            for f in glob.glob(pat):
+                try:
+                    if os.path.isfile(f):
+                        os.unlink(f)
+                except OSError:
+                    pass
+        if len(counts) >= 3:
+            log.warning("Süreç %s son 24 saatte %d kez çöktü; geçici önbellek ve kilit dosyaları temizleniyor.",
+                        name, len(counts))
             for pat in [f"/tmp/*{name}*", f"/private/tmp/*{name}*"]:
                 for f in glob.glob(pat):
                     try:
@@ -565,7 +577,10 @@ class Mek:
         tamed = self.__dict__.setdefault("_tamed", set())
         alive = set()
         for pid, name, cpu, cmd in s.hot:
-            if pid == os.getpid() or re.search(r"kernel_task|WindowServer|coreaudiod|launchd", name):
+            target = cmd or name or ""
+            if (pid == os.getpid()
+                    or re.search(r"kernel_task|WindowServer|coreaudiod|launchd", name)
+                    or services.CREATIVE_PROTECT_RE.search(target)):
                 continue
             alive.add(pid)
             seen[pid] = seen.get(pid, 0) + 1
@@ -685,11 +700,11 @@ class Mek:
         services.priv("purge")
         if not self.cfg.get("memory_relief", True) or s.idle > self.cfg["away_threshold_s"]:
             return
-        front = (s.front or "").lower()
+        working_set = set(self.services.working_pids(s))
         heavy_bg = []
         for pid, exe, cpu, rss in getattr(s, "pro_procs", ()):
             name = services.app_of(exe)
-            if front not in name.lower() and cpu < 15.0 and rss > 4 * 1024 ** 3:
+            if pid not in working_set and rss > 4 * 1024 ** 3:
                 heavy_bg.append((name, pid, rss / 1024 ** 3))
         if heavy_bg:
             app_name, pid, gb = heavy_bg[0]
@@ -800,7 +815,10 @@ class Mek:
                 with conn:
                     cmd = conn.recv(1024).decode("utf-8", "ignore").strip()
                     reply = self.command(cmd)
-                    conn.sendall((reply or "ok").encode())
+                    if not cmd.lower().startswith("odak "):
+                        conn.sendall((reply or "ok").encode())
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             except Exception as e:
                 log.warning("Soket: %s", e)
 
@@ -851,6 +869,15 @@ class Mek:
 
     def command(self, cmd):
         c = cmd.lower().strip()
+        if c.startswith("odak "):
+            parts = cmd.split(None, 2)
+            if len(parts) >= 2 and parts[1].isdigit():
+                pid = int(parts[1])
+                app_name = parts[2] if len(parts) > 2 else ""
+                if hasattr(self, "services") and self.services:
+                    self.services.on_focus_change(pid, app_name, getattr(self, "snap", None))
+            return "ok"
+
         qbox = getattr(self, "questions", None)
         # Bekleyen bir soru varsa ve kullanıcı yanıt verdiyse:
         if qbox and qbox.pending():
@@ -970,7 +997,8 @@ class Mek:
                 "\nGeri almak için: mek karantina geri <no>"
         if c in ("günlük", "gunluk", "log") or c.startswith(("günlük ", "gunluk ")):
             n = int(re.findall(r"\d+", c)[0]) if re.findall(r"\d+", c) else 20
-            keys = ("Asistan", "SAY:", "Arka plana", "Güvenlik", "karantin", "Karantin", "madenci", "temizlik", "güncell")
+            keys = ("Asistan", "SAY:", "Arka plana", "park edildi", "tam performansa", "purge", "yetim",
+                    "Bellek sınırı", "Güvenlik", "karantin", "Karantin", "madenci", "temizlik", "güncell")
             try:
                 with open(config.LOG_FILE, encoding="utf-8", errors="ignore") as f:
                     lines = [l.strip()[:300] for l in f.readlines()[-3000:] if any(k in l for k in keys)]
@@ -989,10 +1017,12 @@ class Mek:
         if c in ("durum", "status"):
             if not s:
                 return "Henüz ölçüm yok."
+            parked = len(getattr(self.services, "parked_pro", ()))
+            clamped = len(getattr(self.services, "clamped", ())) + len(getattr(self.services, "bg_clamped", ()))
             return (f"Öndeki uygulama {s.front}, CPU %{s.cpu:.0f}, GPU %{s.gpu}, bellek %{s.mem_pct:.0f}, "
                     f"takas {s.swap_gb:.1f} GB, boş disk {s.disk_free_gb:.0f} GB, "
-                    f"profil {self.services.profile}, süren render: "
-                    f"{', '.join(self.renders.active()) or 'yok'}.")
+                    f"profil {self.services.profile} (E-çekirdekte: {parked} boşta kurgu, {clamped} yardımcı süreç), "
+                    f"süren render: {', '.join(self.renders.active()) or 'yok'}.")
         if len(cmd.split()) >= 2 or "?" in cmd:  # tanımlı komut değilse serbest soru say
             return self.agent.ask(cmd)
         return "Komutu tanıyamadım. Desteklenen komutlar için `mek yardım` yazın."

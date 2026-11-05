@@ -9,22 +9,39 @@ import time
 
 import psutil
 
-from config import PRO_APP_PATTERN, RENDER_PROCS
+from config import CREATIVE_BUNDLE_PATTERN, PRO_APP_PATTERN, RENDER_PROCS
 
 _PRO_RE = re.compile(PRO_APP_PATTERN)
+_CREATIVE_BUNDLE_RE = re.compile(CREATIVE_BUNDLE_PATTERN)
 _RENDER_RE = {k: re.compile(v) for k, v in RENDER_PROCS.items()}
+
+_libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+try:
+    _cg = ctypes.CDLL("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+    _cg.CGEventSourceSecondsSinceLastEventType.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    _cg.CGEventSourceSecondsSinceLastEventType.restype = ctypes.c_double
+except Exception:
+    _cg = None
+
+_front_override = None  # (timestamp, app_name, pid) — MekMenuBar odak bildirimiyle anında güncellenir
+
+
+def set_front_override(pid, app_name):
+    """MekMenuBar NSWorkspace bildirimi geldiğinde ön plan bilgisini alt süreç açmadan günceller."""
+    global _front_override
+    _front_override = (time.monotonic(), app_name or "", int(pid) if pid else None)
+    _slow["front_info"] = (_front_override[0], (_front_override[1], _front_override[2]))
 
 
 def frontmost_app():
     return front_info()[0]
 
 
-def front_info():
-    """(ön plandaki uygulamanın adı, pid). lsappinfo her seferinde taze bilgi verir
-    (NSWorkspace, runloop'u olmayan süreçte bayatlar)."""
+def _query_lsappinfo_front():
     try:
-        asn = subprocess.check_output(["lsappinfo", "front"], text=True).strip()
-        out = subprocess.check_output(["lsappinfo", "info", "-only", "name", "-only", "pid", asn], text=True)
+        asn = subprocess.check_output(["lsappinfo", "front"], text=True, timeout=3).strip()
+        out = subprocess.check_output(["lsappinfo", "info", "-only", "name", "-only", "pid", asn],
+                                      text=True, timeout=3)
         m = re.search(r'"(?:LSDisplayName|name)"="([^"]*)"', out) or re.match(r'\s*"([^"]+)"', out)
         p = re.search(r"pid\s*=\s*(\d+)", out) or re.search(r'"pid"=(\d+)', out)
         return (m.group(1) if m else ""), (int(p.group(1)) if p else None)
@@ -32,9 +49,24 @@ def front_info():
         return "", None
 
 
+def front_info():
+    """(ön plandaki uygulamanın adı, pid). MekMenuBar odak bildirimi varsa 0 ms'de döner;
+    yoksa önbellekli lsappinfo kullanılır."""
+    if _front_override and (time.monotonic() - _front_override[0] < 20.0):
+        return _front_override[1], _front_override[2]
+    return _cached("front_info", 15, _query_lsappinfo_front)
+
+
 def memory_pressure():
-    """1 normal, 2 uyarı, 4 kritik (çekirdeğin kendi bellek baskısı seviyesi; '% dolu' yanıltıcıdır,
-    macOS boş belleği önbellek olarak kullanır)."""
+    """1 normal, 2 uyarı, 4 kritik (doğrudan sysctlbyname C çağrısı, alt süreç açmaz)."""
+    try:
+        val = ctypes.c_int(1)
+        size = ctypes.c_size_t(ctypes.sizeof(val))
+        if _libc.sysctlbyname(b"kern.memorystatus_vm_pressure_level",
+                              ctypes.byref(val), ctypes.byref(size), None, 0) == 0:
+            return int(val.value or 1)
+    except Exception:
+        pass
     try:
         out = subprocess.check_output(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"],
                                       text=True, timeout=5)
@@ -52,6 +84,15 @@ def running_app_names():
 
 
 def idle_seconds():
+    """Kullanıcının son klavye/fare etkileşiminden bu yana geçen saniye (CoreGraphics C çağrısı, 0 ms)."""
+    if _cg is not None:
+        try:
+            # kCGEventSourceStateCombinedSessionState = 0, kCGAnyInputEventType = 0xFFFFFFFF
+            secs = float(_cg.CGEventSourceSecondsSinceLastEventType(0, 0xFFFFFFFF))
+            if 0.0 <= secs < 1e8:
+                return secs
+        except Exception:
+            pass
     try:
         out = subprocess.check_output(["ioreg", "-c", "IOHIDSystem", "-d", "4"], text=True)
         m = re.search(r'"HIDIdleTime" = (\d+)', out)
@@ -131,35 +172,72 @@ def thermal_state():
 
 class Snapshot:
     __slots__ = ("t", "front", "front_pid", "idle", "cpu", "gpu", "mem_pct", "swap_gb", "disk_free_gb",
-                 "pro_pids", "pro_procs", "render_cpu", "apps", "top_mem", "hot", "thermal", "pressure", "exes")
+                 "pro_pids", "pro_procs", "render_cpu", "apps", "top_mem", "hot", "thermal", "pressure",
+                 "exes", "procs")
+
+
+_PROC_CACHE = {}  # pid -> (create_time, name, cmd): süreç ömrü boyunca değişmeyen bilgileri önbellekle
 
 
 def _proc_scan():
-    """Tek geçişte: kurgu süreçleri, render yükü, en çok bellek, CPU'yu yoranlar ve çalışan program yolları."""
-    pro, pro_procs, render, mem, hot, exes = [], [], {k: 0.0 for k in _RENDER_RE}, [], [], set()
-    for p in psutil.process_iter(["pid", "exe", "cmdline", "cpu_percent", "memory_info", "name"]):
+    """Tek geçişte: kurgu süreçleri, render yükü, en çok bellek, CPU'yu yoranlar ve çalışan program yolları.
+    Aynı sürecin exe/cmdline bilgisi önbelleklenir; böylece her döngüde yüzlerce sysctl çağrısı yapılmaz."""
+    pro, pro_procs, render, mem, hot, exes, procs = [], [], {k: 0.0 for k in _RENDER_RE}, [], [], set(), []
+    alive_pids = set()
+    for p in psutil.process_iter(["pid", "create_time", "name", "cpu_percent", "memory_info"]):
         try:
-            cmd = p.info["exe"] or " ".join(p.info["cmdline"] or [])
-            if not cmd:
+            info = p.info
+            pid = info["pid"]
+            alive_pids.add(pid)
+            ctime = info.get("create_time") or 0.0
+            cached = _PROC_CACHE.get(pid)
+            if cached and cached[0] == ctime:
+                name, cmd = cached[1], cached[2]
+            else:
+                name = info.get("name") or ""
+                exe = info.get("exe")
+                if exe is None:
+                    try:
+                        exe = p.exe()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                        exe = ""
+                if exe:
+                    cmd = exe
+                else:
+                    cmdline = info.get("cmdline")
+                    if cmdline is None:
+                        try:
+                            cmdline = p.cmdline()
+                        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                            cmdline = []
+                    cmd = " ".join(cmdline or [])
+                _PROC_CACHE[pid] = (ctime, name, cmd)
+            if not cmd and not name:
                 continue
-            exes.add(cmd)
-            cpu = p.info["cpu_percent"] or 0.0
-            mi = p.info["memory_info"]
+            if cmd:
+                exes.add(cmd)
+            cpu = info.get("cpu_percent") or 0.0
+            mi = info.get("memory_info")
             rss = mi.rss if mi else 0
-            if _PRO_RE.search(cmd):
-                pro.append(p.info["pid"])
-                pro_procs.append((p.info["pid"], cmd, cpu, rss))
-            elif cpu > 120:
-                hot.append((p.info["pid"], p.info["name"] or "", cpu, cmd))
-            for k, rx in _RENDER_RE.items():
-                if rx.search(cmd):
-                    render[k] += cpu
+            procs.append((pid, name, cmd, cpu, rss))
+            if cmd and _PRO_RE.search(cmd):
+                pro.append(pid)
+                pro_procs.append((pid, cmd, cpu, rss))
+            elif cpu > 120 and not _CREATIVE_BUNDLE_RE.search(cmd or ""):
+                hot.append((pid, name, cpu, cmd))
+            if cmd:
+                for k, rx in _RENDER_RE.items():
+                    if rx.search(cmd):
+                        render[k] += cpu
             if mi:
-                mem.append((rss, p.info["name"] or ""))
+                mem.append((rss, name))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+    if len(_PROC_CACHE) > len(alive_pids) + 64:
+        for dead in set(_PROC_CACHE) - alive_pids:
+            _PROC_CACHE.pop(dead, None)
     mem.sort(reverse=True)
-    return pro, pro_procs, render, mem[:8], hot, exes
+    return pro, pro_procs, render, mem[:8], hot, exes, procs
 
 
 _slow = {}  # ad -> (zaman, değer): pahalı alt süreç sorguları her turda çalışmasın
@@ -187,7 +265,7 @@ def snapshot(events=None):
     s.swap_gb = psutil.swap_memory().used / 1024 ** 3
     st = os.statvfs("/System/Volumes/Data")
     s.disk_free_gb = st.f_bavail * st.f_frsize / 1024 ** 3
-    s.pro_pids, s.pro_procs, s.render_cpu, s.top_mem, s.hot, s.exes = _proc_scan()
+    s.pro_pids, s.pro_procs, s.render_cpu, s.top_mem, s.hot, s.exes, s.procs = _proc_scan()
     s.apps = _cached("apps", 60, running_app_names)
     s.thermal = thermal_state()
     s.pressure = memory_pressure()

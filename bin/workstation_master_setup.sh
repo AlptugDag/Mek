@@ -49,18 +49,20 @@ if ! pgrep -f "Contents/MacOS/Topaz Video" > /dev/null 2>&1; then
     defaults write "com.topazlabs.Topaz Video" allowAnonymousDataCollection -int 0 2>/dev/null
 fi
 
-# 4. App Nap: allow macOS native App Nap for idle background apps so they don't stutter foreground
+# 4. Disable macOS App Nap timer coalescing for Pro Creative Apps so timeline scrubbing & playback never stutter
 for bid in \
     "com.blackmagic-design.DaVinciResolve" \
     "com.adobe.PremierePro.26" \
+    "com.adobe.PremierePro" \
     "com.adobe.ame.application.26" \
     "com.adobe.AfterEffects.application" \
+    "com.adobe.AfterEffects" \
     "com.adobe.Audition" \
     "com.adobe.Photoshop" \
     "com.topazlabs.Topaz-Video" \
     "com.topazlabs.Topaz Video"
 do
-    defaults delete "$bid" NSAppSleepDisabled 2>/dev/null || true
+    defaults write "$bid" NSAppSleepDisabled -bool YES 2>/dev/null || true
 done
 
 # 5. Enforce Spotlight Exclusions (.metadata_never_index) on All Heavy Cache/Temp Folders

@@ -28,7 +28,7 @@ APPS = {
                   "match": r"Contents/MacOS/Adobe Photoshop"},
     "adobe_video": {"name": "Premiere Pro / After Effects / Media Encoder", "solo": 0.70, "min_gb": 12,
                     "match": r"Contents/MacOS/(Adobe Premiere Pro|After Effects|Adobe Media Encoder|"
-                             r"Adobe Audition|PProHeadless|dynamiclinkmanager)"},
+                             r"Adobe Audition|PProHeadless)"},
     "resolve": {"name": "DaVinci Resolve", "solo": 0.60, "min_gb": 12,
                 "match": r"Contents/MacOS/Resolve"},
     "topaz_video": {"name": "Topaz Video", "solo": 0.55, "min_gb": 8,
@@ -137,10 +137,15 @@ class MemoryBudget:
         self.last_plan = {"running": sorted(running), "plan": target}
         changes = []
         for key, gb in target.items():
-            if key in running:
-                continue
             current = self.read(key)
-            if current is None or abs(current - gb) < 2:
+            if current is None:
+                continue
+            if key in running:
+                # Açık uygulamanın ayarına yalnızca aşırı şişkinse (ör. 64 GB'da 58 GB Adobe varsayılanı)
+                # kardeş uygulamalar (Media Encoder / After Effects) açılırken doğru sınırı okusun diye müdahale edilir.
+                if key != "adobe_video" or (current - gb) < 12:
+                    continue
+            elif abs(current - gb) < 2:
                 continue
             try:
                 self.write(key, gb)
