@@ -10,13 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.3-orange" alt="v0.0.0.3">
+  <img src="https://img.shields.io/badge/version-0.0.0.4-green" alt="v0.0.0.4">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.3:** Bu sürümde Mek sizi dinlemez, yalnızca kendisi konuşur. Mikrofon hiç açılmaz.
-> Sesle yönetilen asistan ve kurgu otomasyonu içeren önceki Mek sürümü [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2)
-> etiketinde duruyor.
+> **v0.0.0.4:** Apple Silicon M1 Max kurgu canavarı sürümü. Metal Heap & Sıfır Kopya GPU havuzu, sınırsız Multi-Frame Rendering (MFR), 400 GB/s birleşik RAM sayfa ön-ısıtması (`prewarmer`), sürümden bağımsız (`2026` → `2030+`) eklenti ve kurgu servisi koruması, dinamik aktif/boşta bellek dağılımı, Mac Studio Hoparlörü %30 bağımsız ses mimarisi, menü çubuğunda sade "Mek" metni ve sessiz kilit/çökme onarımı devrede. Önceki sürümler: [`v0.0.0.3`](https://github.com/AlptugDag/Mek/tree/v0.0.0.3), [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,

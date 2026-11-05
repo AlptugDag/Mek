@@ -4,6 +4,8 @@
   <key>CFBundleIdentifier</key><string>com.alptug.mek.ui</string>
   <key>CFBundleName</key><string>Mek</string>
   <key>CFBundleIconFile</key><string>Mek.icns</string>
+  <key>CFBundleShortVersionString</key><string>0.0.0.4</string>
+  <key>CFBundleVersion</key><string>0.0.0.4</string>
   <key>NSMicrophoneUsageDescription</key><string>Mek yalnızca "Sesle sor" öğesine tıkladığınızda 8 saniyeye kadar dinler.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Sorunuzu cihaz üzerinde metne çevirmek için.</string>
 </dict></plist>
