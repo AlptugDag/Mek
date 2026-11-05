@@ -1026,6 +1026,14 @@ class Mek:
                 style = style_part.strip().strip("'\"")
             return self.kurgu.direct_multicam(rest, style)
 
+        if c.startswith(("kurgu key", "kurgu api", "api key", "gemini key")):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu key <Gemini_API_Anahtarı>"
+            if hasattr(self, "kurgu") and self.kurgu:
+                return self.kurgu.set_gemini_key(parts[2].strip())
+            return "Kurgu yöneticisi etkin değil."
+
         if c.startswith("kurgu hook"):
             parts = cmd.split(None, 2)
             if not hasattr(self, "kurgu") or not self.kurgu:
@@ -1034,9 +1042,17 @@ class Mek:
                 # Parametresiz: Doğrudan Premiere Pro timeline'ının ilk 3 saniyesine viral hook uygula!
                 return self.kurgu.apply_viral_hook_in_premiere()
             rest = parts[2].strip()
+
+            style = "punch_zoom"
+            if "--stil" in rest:
+                s_parts = rest.split("--stil", 1)
+                rest = s_parts[0].strip()
+                s_val = s_parts[1].strip().split()[0].strip("'\"")
+                style = s_val
+
             # Eğer parametre bir dosya yolu değilse başlık olarak kabul et ve Premiere'e bas
             if not os.path.exists(rest) and not rest.startswith("/"):
-                return self.kurgu.apply_viral_hook_in_premiere(title=rest)
+                return self.kurgu.apply_viral_hook_in_premiere(title=rest or None, style=style)
             key = None
             if "--key" in rest:
                 v_part, k_part = rest.split("--key", 1)

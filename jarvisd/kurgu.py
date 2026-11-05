@@ -346,12 +346,57 @@ end tell
 
     # --- Premiere Pro Canlı Timeline Müdahaleleri ---
 
-    def apply_viral_hook_in_premiere(self, title: Optional[str] = None, style: str = "kinetic_punch_zoom") -> str:
+    def set_gemini_key(self, api_key: str) -> str:
+        """Gemini API anahtarını kaydeder ve viral hook motorunu günceller."""
+        k = api_key.strip()
+        self.viral_hook.gemini_api_key = k
+        try:
+            cfg_path = os.path.join(os.path.expanduser("~/.jarvis"), "config.json")
+            data = {}
+            if os.path.exists(cfg_path):
+                try:
+                    with open(cfg_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+            data["gemini_api_key"] = k
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return "Gemini API anahtarı başarıyla kaydedildi. Yapay zeka destekli viral kanca motoru aktif."
+        except Exception as e:
+            return f"API anahtarı hafızaya alındı fakat dosyaya yazılamadı: {e}"
+
+    def apply_viral_hook_in_premiere(self, title: Optional[str] = None, style: str = "punch_zoom", gemini_key: Optional[str] = None) -> str:
         """Premiere Pro açık timeline'ının ilk 3 saniyesine (00:00:00 - 00:03:00) anında viral hook efektleri uygular."""
+        if gemini_key:
+            self.viral_hook.gemini_api_key = gemini_key
+
         if not self.gateway.is_connected():
             return ("Premiere Pro bağlantısı bekleniyor. Lütfen Premiere Pro'da Window > Extensions > "
                     "Alptuguide Studio panelinin açık olduğundan emin olun.")
-        res = self.gateway.send_command("apply_viral_hook", {"title": title, "style": style})
+
+        # Eğer stil ai_smart ise veya başlık boş ve Gemini anahtarı varsa AI ile kanca üret
+        hook_title = title
+        chosen_style = style
+        if (style == "ai_smart" or not hook_title) and self.viral_hook.gemini_api_key:
+            try:
+                # Timeline sekans adını al
+                seq_info = self.gateway.send_command("analyze_timeline", {})
+                seq_name = seq_info.get("name", "Video")
+                ai_prompt = (
+                    f"Bir video kurgusu için ilk 3 saniyede izleyicinin kaydırmasını önleyecek (retention hook), "
+                    f"Instagram Reels ve TikTok'ta viral olan çarpıcı bir kanca başlığı ve kurgu stili öner. "
+                    f"Video sekans adı / konusu: '{seq_name}'. "
+                    f"Sadece şu JSON formatında yanıt ver: {{\"title\": \"⚡ BAŞLIK\", \"style\": \"punch_zoom\" veya \"hormozi_title\" veya \"strobe_flash\" veya \"glitch_shock\" veya \"jump_snap\"}}"
+                )
+                res_ai = self.viral_hook.analyze_with_gemini(ai_prompt)
+                if res_ai and len(res_ai) > 0 and isinstance(res_ai[0], dict):
+                    hook_title = res_ai[0].get("title", hook_title)
+                    chosen_style = res_ai[0].get("style", "punch_zoom")
+            except Exception:
+                pass
+
+        res = self.gateway.send_command("apply_viral_hook", {"title": hook_title, "style": chosen_style})
         if not res.get("ok"):
             return f"Premiere Pro hook hatası: {res.get('message', 'Bilinmeyen hata')}"
         return res.get("message", "Timeline'ın ilk 3 saniyesine viral hook efektleri uygulandı.")

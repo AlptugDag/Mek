@@ -226,7 +226,10 @@ class TestKurguManagerIntegration(unittest.TestCase):
         # Mock Premiere Client bağlantısı ve canlı hook testi
         import socket
         import threading
-        gw = self.km.gateway
+        test_port = 45799
+        from jarvisd.premiere_gateway import PremiereGateway
+        gw = PremiereGateway(kurgu_mgr=self.km, port=test_port)
+        self.km.gateway = gw
         gw.start()
         time.sleep(0.05)
 
@@ -234,7 +237,7 @@ class TestKurguManagerIntegration(unittest.TestCase):
             def mock_client_worker():
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.connect(("127.0.0.1", 45732))
+                    s.connect(("127.0.0.1", test_port))
                     # Hello
                     s.sendall(b'{"type":"status_update","state":{"host":"PPRO","ready":true}}\n')
                     data = s.recv(4096).decode("utf-8")

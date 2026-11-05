@@ -258,95 +258,37 @@ public struct MekPremiereExportIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
+public struct MekCommandIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek"
+    public static var description = IntentDescription("Mek asistanına doğal dille soru sorar veya komut verir.")
+    public static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Komut veya Soru")
+    public var prompt: String?
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let cmd = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if cmd.isEmpty {
+            return .result(dialog: "Mek hazır. Ne yapmamı istersiniz?")
+        }
+        let result = MekSocketBridge.execute(cmd)
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
 public struct MekShortcuts: AppShortcutsProvider {
     public static var appShortcuts: [AppShortcut] {
         AppShortcut(
-            intent: MekStatusIntent(),
+            intent: MekCommandIntent(),
             phrases: [
-                "\(.applicationName) durumu",
-                "\(.applicationName) durum",
-                "\(.applicationName) rapor ver",
-                "\(.applicationName) nasıl"
+                "\(.applicationName)",
+                "\(.applicationName) \(\.$prompt)"
             ],
-            shortTitle: "Mek Durumu",
-            systemImageName: "gauge.with.dots.needle.bottom.50percent"
-        )
-        AppShortcut(
-            intent: MekBriefingIntent(),
-            phrases: [
-                "\(.applicationName) brifing",
-                "\(.applicationName) günün brifingi",
-                "\(.applicationName) sabah brifingi"
-            ],
-            shortTitle: "Mek Brifing",
-            systemImageName: "sun.max"
-        )
-        AppShortcut(
-            intent: MekCleanIntent(),
-            phrases: [
-                "\(.applicationName) temizlik yap",
-                "\(.applicationName) temizle",
-                "\(.applicationName) önbelleği temizle"
-            ],
-            shortTitle: "Mek Temizle",
+            shortTitle: "Mek",
             systemImageName: "sparkles"
-        )
-        AppShortcut(
-            intent: MekCreativeModeIntent(),
-            phrases: [
-                "\(.applicationName) kurgu modu",
-                "\(.applicationName) performans modu"
-            ],
-            shortTitle: "Kurgu Modu",
-            systemImageName: "film"
-        )
-        AppShortcut(
-            intent: MekSilentFanIntent(),
-            phrases: [
-                "\(.applicationName) fanı sessize al",
-                "\(.applicationName) sessiz fan"
-            ],
-            shortTitle: "Sessiz Fan",
-            systemImageName: "fanblades"
-        )
-        AppShortcut(
-            intent: MekKurguStatusIntent(),
-            phrases: [
-                "\(.applicationName) kurgu durumu",
-                "\(.applicationName) montaj durumu",
-                "\(.applicationName) kurgu nasıl"
-            ],
-            shortTitle: "Kurgu Durumu",
-            systemImageName: "film.stack"
-        )
-        AppShortcut(
-            intent: MekKurguOptimizeIntent(),
-            phrases: [
-                "\(.applicationName) kurguyu hızlandır",
-                "\(.applicationName) kurgu optimize et",
-                "\(.applicationName) kurgu hazırla"
-            ],
-            shortTitle: "Kurgu Optimize Et",
-            systemImageName: "bolt.badge.clock"
-        )
-        AppShortcut(
-            intent: MekDaVinciRenderIntent(),
-            phrases: [
-                "\(.applicationName) davinci render başlat",
-                "\(.applicationName) render al",
-                "\(.applicationName) render başlat"
-            ],
-            shortTitle: "DaVinci Render",
-            systemImageName: "play.circle"
-        )
-        AppShortcut(
-            intent: MekPremiereExportIntent(),
-            phrases: [
-                "\(.applicationName) premiere export et",
-                "\(.applicationName) premiere dışa aktar"
-            ],
-            shortTitle: "Premiere Export",
-            systemImageName: "arrow.up.forward.app"
         )
     }
 }

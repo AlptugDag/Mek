@@ -25,8 +25,9 @@ GATEWAY_HOST = "127.0.0.1"
 class PremiereGateway:
     """Premiere Pro CEP paneliyle anlık iki yönlü köprü yöneten sunucu."""
 
-    def __init__(self, kurgu_mgr=None):
+    def __init__(self, kurgu_mgr=None, port: int = GATEWAY_PORT):
         self.kurgu = kurgu_mgr
+        self.port = port
         self.server_socket: Optional[socket.socket] = None
         self.active_client: Optional[socket.socket] = None
         self.client_lock = threading.Lock()
@@ -63,7 +64,7 @@ class PremiereGateway:
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((GATEWAY_HOST, GATEWAY_PORT))
+            self.server_socket.bind((GATEWAY_HOST, self.port))
             self.server_socket.listen(2)
             self.server_socket.settimeout(1.0)
         except Exception as e:
