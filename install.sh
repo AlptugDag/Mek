@@ -9,7 +9,7 @@ CONF=/opt/homebrew/etc/clamav/freshclam.conf
 [ -f "$CONF" ] || sed 's/^Example/#Example/' "$CONF.sample" > "$CONF"
 mkdir -p "$J/jarvisd" "$J/ai" "$J/state" "$J/legacy" "$BIN" "$LA"
 cp "$SRC"/jarvisd/*.py "$SRC"/jarvisd/*.sh "$J/jarvisd/"; cp "$SRC/jarvis.py" "$J/"
-cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN"/*
+cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh" "$BIN/install_siri_shortcut.sh"
 ln -sf jarvis "$BIN/mek"
 swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
 swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar" \
