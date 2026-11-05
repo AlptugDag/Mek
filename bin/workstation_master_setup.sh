@@ -128,4 +128,9 @@ do
     fi
 done
 
+# 6. Tune Internal Adobe / Creative Engine Parameters (Metal Heap, Multi-Frame Rendering, Async Queues)
+if [ -x "$HOME/.jarvis/venv/bin/python" ] && [ -f "$HOME/.jarvis/jarvisd/app_tuner.py" ]; then
+    PYTHONPATH="$HOME/.jarvis/jarvisd" "$HOME/.jarvis/venv/bin/python" -c "import app_tuner; app_tuner.tune_all()" >/dev/null 2>&1 || true
+fi
+
 exit 0

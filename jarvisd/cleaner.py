@@ -32,6 +32,7 @@ PRIV = "/usr/local/libexec/mek-priv"
 PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H(".jarvis"),
            H(".cache/huggingface"), H(".cache/torch"), H(".cache/alptugdub-vc"), H(".cache/whisper"),
            H(".ollama"), H(".lmstudio"), H("Library/Application Support/Topaz Labs LLC/Topaz Video/models"),
+           H("Library/Application Support/Adobe/Common/PTX"),
            H("Pictures"), H("Library/Mail"), H("Library/Messages"), H("Library/Mobile Documents"),
            H("Library/Application Support/MobileSync"), H("Library/Keychains"),
            H("Library/Application Support/Blackmagic Design/DaVinci Resolve/Resolve Disk Database")]
@@ -129,11 +130,14 @@ class Cleaner:
     # ------------------------------------------------------------------ kullanıcı alanı
     def kurgu(self):
         A = H("Library/Application Support/Adobe/Common")
-        for sub in ("Media Cache Files", "Media Cache", "Peak Files", "Analyzer Cache Files", "PTX", "Cache",
-                    "Team Projects Cache", "Team Projects Local Hub"):
+        # Aktif ve yakın tarihli projelerin ses dalga formu (Peak Files) ve indeks (Media Cache)
+        # önbellekleri 60 gün korunur; PTX (derlenmiş GPU shader önbelleği) ASLA silinmez!
+        for sub in ("Media Cache Files", "Media Cache", "Peak Files", "Analyzer Cache Files"):
+            self.age("Adobe önbellekleri", os.path.join(A, sub), 60)
+        for sub in ("Cache", "Team Projects Cache", "Team Projects Local Hub"):
             self.age("Adobe önbellekleri", os.path.join(A, sub), 14)
-        self.age("Adobe önbellekleri", H("Documents/Adobe/Premiere Pro/*/Profile-*/Media Cache*"), 14)
-        self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/**/Disk Cache"), 14)
+        self.age("Adobe önbellekleri", H("Documents/Adobe/Premiere Pro/*/Profile-*/Media Cache*"), 60)
+        self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/**/Disk Cache"), 30)
         self.age("Adobe önbellekleri", H("Library/Caches/Adobe"), 7)
         self.age("Adobe önbellekleri", H("Library/Caches/Adobe Camera Raw"), 14)
         self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/CameraRaw/Cache"), 14)

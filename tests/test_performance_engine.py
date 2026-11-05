@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 import os
 import sys
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "jarvisd"))
+import app_tuner
 import memory_budget
+import prewarmer
 import services
 
 
@@ -14,6 +17,7 @@ class PerformanceEngineTests(unittest.TestCase):
     def setUp(self):
         with patch.object(services, "priv", return_value=True), \
              patch.object(services, "_run"), \
+             patch.object(services.ServiceManager, "_tune_and_prewarm_bg"), \
              patch("os.access", return_value=False):
             self.mgr = services.ServiceManager({"deferrable_agents": [], "cleaner_min_gap_h": 12})
 
@@ -77,7 +81,7 @@ class PerformanceEngineTests(unittest.TestCase):
             # İkincil boşta kurgu uygulaması geri alınabilir Tier-3 (-B -t 3 -l 3) kademesine alınır, ASLA -b veya nice>0 yapılmaz:
             self.assertIn(["/usr/sbin/taskpolicy", "-B", "-t", "3", "-l", "3", "-p", "4511"], cmds)
             self.assertNotIn(["/usr/sbin/taskpolicy", "-b", "-p", "4511"], cmds)
-            renice_mock.assert_not_called()
+            renice_mock.assert_called_once_with(5000, 0)
 
     def test_orphan_helpers_never_killed_even_with_force_when_adobe_main_app_open(self):
         snap = SimpleNamespace(
@@ -158,6 +162,65 @@ class PerformanceEngineTests(unittest.TestCase):
     def test_orphan_dynamiclinkmanager_does_not_count_as_running_adobe_video_in_memory_budget(self):
         exes = ["/Library/Application Support/Adobe/Common/dynamiclink/1.0/dynamiclinkmanager"]
         self.assertEqual(memory_budget.running_apps(exes), set())
+
+    def test_growth_sdk_helper_is_excluded_from_creative_protection_and_killed_when_spinning(self):
+        bloat_cmd = (
+            "/Users/alptug/Library/Application Support/Adobe/Adobe Desktop Common/HEX/"
+            "Creative Cloud Helper.app/Contents/MacOS/Creative Cloud Helper --remoteApplet=GrowthSDKHelper_BL"
+        )
+        self.assertFalse(services.is_creative_or_plugin(bloat_cmd))
+        snap = SimpleNamespace(
+            pro_pids=[4511],
+            ppids={},
+            procs=[(27159, "Creative Cloud Helper", bloat_cmd, 98.3, 120_000_000)],
+        )
+        with patch.object(services, "_run"), patch("os.kill") as kill_mock:
+            self.mgr.guard(snap)
+            kill_mock.assert_called_once_with(27159, services.signal.SIGKILL)
+
+    def test_app_tuner_optimizes_debug_database_and_premiere_xml_prefs(self):
+        with tempfile.TemporaryDirectory() as td:
+            db_path = os.path.join(td, "Debug Database.txt")
+            with open(db_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "ExporterCalcMaxRequests.OverrideMaxRequests\t1\t\n"
+                    "GF.DisableMemoryPooling\ttrue\ttrue\n"
+                    "GF.UseMetalHeap\tfalse\tfalse\n"
+                    "MediaCoreAsyncFrameCount3\t10\t10\n"
+                    "BeePostedCmdTraceMode (0:None,1:Posted,2:PostedDelta,3:PostedDeltaAndDecode)\t2\t2\n"
+                )
+            changes = app_tuner.tune_debug_database_file(db_path)
+            self.assertEqual(changes, 5)
+            content = open(db_path, encoding="utf-8").read()
+            self.assertIn("ExporterCalcMaxRequests.OverrideMaxRequests\t\t\n", content)
+            self.assertIn("GF.DisableMemoryPooling\tfalse\ttrue\n", content)
+            self.assertIn("GF.UseMetalHeap\ttrue\tfalse\n", content)
+            self.assertIn("MediaCoreAsyncFrameCount3\t32\t10\n", content)
+
+            latest_app = os.path.join(td, "Adobe Premiere Pro 2030.app")
+            os.makedirs(latest_app, exist_ok=True)
+            xml_path = os.path.join(td, "Adobe Premiere Pro Prefs")
+            with open(xml_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "<PremiereData>\n"
+                    "\t<BE.Prefs.Undo.MaxLevels>1000</BE.Prefs.Undo.MaxLevels>\n"
+                    "\t<BE.Prefs.AutoSave.Interval>5</BE.Prefs.AutoSave.Interval>\n"
+                    "\t<HSL.Watermark>/Applications/Adobe Premiere Pro 2023/Adobe Premiere Pro 2023.app/Contents/w.png</HSL.Watermark>\n"
+                    "</PremiereData>\n"
+                )
+            xml_changes = app_tuner.tune_premiere_prefs_file(xml_path, latest_app=latest_app)
+            self.assertEqual(xml_changes, 3)
+            xml_out = open(xml_path, encoding="utf-8").read()
+            self.assertIn("<BE.Prefs.Undo.MaxLevels>100</BE.Prefs.Undo.MaxLevels>", xml_out)
+            self.assertIn("<BE.Prefs.AutoSave.Interval>15</BE.Prefs.AutoSave.Interval>", xml_out)
+            self.assertIn(latest_app, xml_out)
+
+    def test_prewarmer_advises_files_into_page_cache(self):
+        with tempfile.TemporaryDirectory() as td:
+            sample = os.path.join(td, "plugin.bundle")
+            with open(sample, "wb") as f:
+                f.write(b"x" * 4096)
+            self.assertEqual(prewarmer.advise_file(sample), 4096)
 
 
 if __name__ == "__main__":

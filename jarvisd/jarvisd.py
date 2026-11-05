@@ -699,7 +699,8 @@ class Mek:
             return 1e12
 
     def check_memory_relief(self, s):
-        services.priv("purge")
+        if getattr(s, "pressure", 1) >= 4:
+            services.priv("purge")
         if not self.cfg.get("memory_relief", True) or s.idle > self.cfg["away_threshold_s"]:
             return
         working_set = set(self.services.working_pids(s))

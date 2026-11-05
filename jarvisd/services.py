@@ -32,18 +32,28 @@ from config import (
     PRO_APP_PATTERN,
     STATE_DIR,
 )
+import app_tuner
 import context as ctx
+from prewarmer import PreWarmer
 
 log = logging.getLogger("mek.services")
 UID = os.getuid()
+
+# Adobe'nin pazarlama/reklam/telemetri alt süreçleri (%98 CPU yakabilen GrowthSDKHelper vb.):
+# Bunlar Creative Cloud klasörü altında çalışsa bile ASLA kurgu yardımcısı sayılmaz!
+ADOBE_MARKETING_BLOAT_RE = re.compile(
+    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|crashpad_handler|"
+    r"CCXProcess.*--type=renderer",
+    re.I,
+)
 
 # Kurgu uygulamaları, eklentiler (Red Giant, Maxon, BorisFX, Dehancer, FxFactory, Laforge, CEP/UXP)
 # ve bunların bağlı olduğu IPC/lisans/köprü servisleri:
 # Hangi sürümde (2026, 2030 vb.) olursa olsun ASLA taskpolicy -b (DARWIN_BG) altına alınmaz!
 CREATIVE_IPC_RE = re.compile(
     r"CEPHtmlEngine|UXP|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub|"
-    r"PProHeadless|aerender|AEGPUSniffer|Adobe Desktop Service|CCLibrary|CCXProcess|Core Sync|"
-    r"Creative Cloud|ACCFinderSync|Red Giant|Maxon|mxnotify|mxredirect|Magic Bullet|Trapcode|"
+    r"PProHeadless|aerender|AEGPUSniffer|Adobe Desktop Service|CCLibrary|Core Sync|"
+    r"ACCFinderSync|Red Giant|Maxon|mxnotify|mxredirect|Magic Bullet|Trapcode|"
     r"BorisFX|bfxdhelper|rlmserver|Sapphire|Continuum|Mocha|FxFactory|Dehancer|Laforge|"
     r"Captioneer|AtomX|BeatEdit|PSEPremierePanel|FilmConvert|fusionscript|DPDecoder|"
     r"Fairlight|neuroserver|veai|logioptionsplus|Camera Hub",
@@ -65,8 +75,8 @@ BG_CLAMP = re.compile(
 
 # Yalnızca kurgu ve eklenti ekosisteminin DIŞINDA kalan bulut/güncelleyici/telemetri süreçleri:
 BLOAT_CLAMP = re.compile(
-    r"Adobe Crash Processor|CRLogTransport|crashpad_handler|GoogleUpdater|"
-    r"Dropbox|OneDrive|Google Drive|bird|cloudd|photolibraryd|cloudphotod"
+    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|crashpad_handler|"
+    r"GoogleUpdater|Dropbox|OneDrive|Google Drive|bird|cloudd|photolibraryd|cloudphotod"
 )
 
 PERF_CLAMP = BLOAT_CLAMP
@@ -119,6 +129,8 @@ def _discover_installed_plugin_rx():
 def is_creative_or_plugin(target):
     """Verilen süreç adı/yolu bir kurgu uygulamasına, eklentiye veya eklenti servisine mi ait?"""
     if not target:
+        return False
+    if ADOBE_MARKETING_BLOAT_RE.search(target):
         return False
     if CREATIVE_PROTECT_RE.search(target):
         return True
@@ -212,15 +224,25 @@ class ServiceManager:
         self.clamped = set()          # E-çekirdeğe alınan bulut/eşitleme süreçleri
         self.bg_clamped = set()       # E-çekirdeğe alınan sistem indeksleme süreçleri
         self.next_guard = 0.0
+        self.next_tune = 0.0
         self.last_adobe_seen = time.time()
         self.last_purge = 0.0
         self.last_front_pro = None
         self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
+        self.prewarmer = PreWarmer()
         priv("restore-high-power")
         self._ensure_plugin_services()
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        threading.Thread(target=self._tune_and_prewarm_bg, daemon=True).start()
+
+    def _tune_and_prewarm_bg(self):
+        try:
+            app_tuner.tune_all()
+            self.prewarmer.tick_async(pressure=1, mem_pct=50.0)
+        except Exception as e:
+            log.warning("Başlangıç kurgu motoru optimizasyonu hatası: %s", e)
 
     def _ensure_plugin_services(self):
         """Red Giant, Maxon, BorisFX, Adobe ve Topaz eklenti servislerinin her zaman çalışır olmasını sağlar."""
@@ -245,6 +267,7 @@ class ServiceManager:
         """Kurgu sürecini ve alt süreç ağacını arka plan kısıtından çıkarıp tam P-çekirdek/Tier-0 önceliğine alır."""
         if pid in self.parked_pro or pid not in self.boosted:
             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+            _renice_safe(pid, 0)
             self.parked_pro.discard(pid)
             self.boosted.add(pid)
             log.info("Kurgu süreci tam performansa alındı (P-çekirdek, Tier-0 I/O): pid=%d", pid)
@@ -252,6 +275,7 @@ class ServiceManager:
             for child_pid in _lineage_pids({pid}, snap.ppids):
                 if child_pid not in self.unthrottled_ipc:
                     _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(child_pid)])
+                    _renice_safe(child_pid, 0)
                     self.unthrottled_ipc.add(child_pid)
 
     def _park_pro(self, pid, name="", secondary=False):
@@ -267,8 +291,9 @@ class ServiceManager:
             log.info("Arka planda boşta bekleyen kurgu süreci bekleme kipine (Tier-%s) alındı: %s (pid=%d)",
                      tier, name or "pro", pid)
 
-    def smart_purge(self, reason="bellek baskısı"):
-        """İnaktif dosya önbelleğini (Pages inactive) hız sınırlamalı olarak temizler."""
+    def smart_purge(self, reason="kritik bellek baskısı"):
+        """Yalnızca kritik çekirdek bellek baskısında (pressure >= 4) çalıştırılır.
+        Normal kullanımda dosya önbelleği (Unified Buffer Cache) ASLA sıfırlanmaz."""
         now = time.time()
         if now - self.last_purge < PURGE_COOLDOWN_S:
             return False
@@ -334,9 +359,10 @@ class ServiceManager:
 
         if focused_is_pro:
             if self.last_front_pro and self.last_front_pro != front_lower and snap is not None:
-                # Bir ağır kurgu uygulamasından diğerine geçildi: bellek/takas yüksekse önbelleği rahatlat
-                if getattr(snap, "mem_pct", 0) >= 75 or getattr(snap, "pressure", 1) >= 2 or getattr(snap, "swap_gb", 0) >= 1.0:
-                    self.smart_purge(f"{self.last_front_pro} -> {front_lower} geçişi")
+                # Yalnızca kırmızı/kritik bellek baskısı (pressure >= 4) varsa purge çalıştır;
+                # normal geçişlerde birleşik RAM dosya önbelleği korunur!
+                if getattr(snap, "pressure", 1) >= 4:
+                    self.smart_purge(f"{self.last_front_pro} -> {front_lower} kritik bellek geçişi")
             self.last_front_pro = front_lower
 
     # --- 30 saniyede bir ---------------------------------------------------------
@@ -351,14 +377,19 @@ class ServiceManager:
                 if ("WallpaperMacintoshExtension" in name or name == "siriactionsd") and cpu > 80.0:
                     os.kill(pid, signal.SIGKILL)
                     continue
+                if "GrowthSDKHelper" in target and cpu > 25.0:
+                    os.kill(pid, signal.SIGKILL)
+                    log.info("Adobe pazarlama süreci (GrowthSDKHelper) yüksek CPU nedeniyle sonlandırıldı: pid=%d (%%%.0f)", pid, cpu)
+                    continue
                 # Kurgu paketleri, alt süreç ağaçları, eklentiler ve bağlı servisler (Red Giant, Maxon,
                 # BorisFX, Dehancer, FxFactory, CEPHtmlEngine, dynamiclinkmanager vb.) kesinlikle kısıtlanmaz;
                 # aksine tam performansa (Tier-0, P-çekirdek) açılır!
-                if pid in lineage or is_creative_or_plugin(target):
+                if (pid in lineage or is_creative_or_plugin(target)) and not ADOBE_MARKETING_BLOAT_RE.search(target):
                     if pid in lineage or CREATIVE_IPC_RE.search(target) or is_creative_or_plugin(target):
                         alive_ipc.add(pid)
                         if pid not in self.unthrottled_ipc:
                             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+                            _renice_safe(pid, 0)
                     continue
                 if BG_CLAMP.search(target):
                     alive_bg.add(pid)
@@ -395,6 +426,12 @@ class ServiceManager:
         if now >= self.next_guard:
             self.next_guard = now + 30
             self.guard(snap)
+        if now >= self.next_tune:
+            self.next_tune = now + 900
+            self.prewarmer.tick_async(
+                pressure=getattr(snap, "pressure", 1),
+                mem_pct=getattr(snap, "mem_pct", 0.0),
+            )
 
         working = self.working_pids(snap)
         working_set = set(working)
@@ -424,9 +461,9 @@ class ServiceManager:
                 if working_set or (now - last_act >= BG_PARK_DELAY_S):
                     self._park_pro(pid, app_of(exe), secondary=bool(working_set))
 
-        # Bellek baskısı veya yüksek takas varsa ve son temizlikten beri süre geçtiyse önbelleği boşalt
-        if snap.pro_pids and (getattr(snap, "pressure", 1) >= 2 or getattr(snap, "swap_gb", 0) >= 2.0):
-            self.smart_purge("bellek/takas baskısı")
+        # Yalnızca kırmızı/kritik çekirdek bellek baskısı (pressure >= 4) varsa purge çalıştır
+        if snap.pro_pids and getattr(snap, "pressure", 1) >= 4:
+            self.smart_purge("kritik bellek baskısı")
 
         live = set(snap.pro_pids)
         self.boosted &= live
@@ -495,11 +532,12 @@ class ServiceManager:
         for plist in self.stopped_agents:
             _run(["/bin/launchctl", "bootstrap", f"gui/{UID}", plist])
         self.stopped_agents = []
-        # Premiere/AE/Photoshop kapandıysa yetim yardımcı süreçleri temizle
+        # Premiere/AE/Photoshop kapandıysa yetim yardımcı süreçleri temizle ve iç motor ayarlarını yenile
         self.cleanup_orphans(force=True)
         priv("normal")
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        threading.Thread(target=self._tune_and_prewarm_bg, daemon=True).start()
 
     def shutdown(self):
         if self.profile != "normal":
@@ -514,10 +552,9 @@ class ServiceManager:
         return time.time() - last > self.cfg["cleaner_min_gap_h"] * 3600
 
     def run_cleaner(self, busy=False):
-        """busy: kurgu/render sürüyorsa purge gibi ağır adımlar yapılmaz."""
+        """busy: kurgu/render sürüyorsa temizlik yapılmaz."""
         if busy or not os.access(CLEANER, os.X_OK):
             return False
         open(self.cleaner_stamp, "w").close()
         proc = subprocess.Popen([CLEANER, "--auto"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        priv("purge")
         return proc

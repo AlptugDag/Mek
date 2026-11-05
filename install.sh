@@ -13,9 +13,9 @@ cp "$SRC"/jarvisd/*.py "$SRC"/jarvisd/*.sh "$J/jarvisd/"; cp "$SRC/jarvis.py" "$
 [ -f "$SRC/ui/Mek.icns" ] && cp "$SRC/ui/Mek.icns" "$J/Mek.icns"
 cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh" "$BIN/install_siri_shortcut.sh"
 ln -sf jarvis "$BIN/mek"
-swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai" || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
-swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar" \
-  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$SRC/ui/Info.plist"
+(swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai.tmp" && mv -f "$J/ai/jarvis-ai.tmp" "$J/ai/jarvis-ai") || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
+swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar.tmp" \
+  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$SRC/ui/Info.plist" && mv -f "$J/mek-menubar.tmp" "$J/mek-menubar"
 [ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
 for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek; do
