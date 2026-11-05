@@ -61,15 +61,8 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
     private func configureStatusButton(suffix: String) {
         guard let button = statusItem.button else { return }
-        if let icon = appIcon?.copy() as? NSImage {
-            icon.size = NSSize(width: 18, height: 18)
-            icon.isTemplate = false
-            button.image = icon
-            button.imagePosition = .imageLeading
-            button.title = suffix.isEmpty ? " Mek" : " Mek \(suffix)"
-        } else {
-            button.title = suffix.isEmpty ? "Mek" : "Mek \(suffix)"
-        }
+        button.image = nil
+        button.title = suffix.isEmpty ? "Mek" : "Mek \(suffix)"
     }
 
     /// Ön plandaki uygulama değiştiğinde (<15 ms) doğrudan Unix soketi üzerinden Mek servisine haber verir.

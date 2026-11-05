@@ -23,21 +23,35 @@ import time
 
 import psutil
 
-from config import CLEANER, CREATIVE_BUNDLE_PATTERN, MASTER_SETUP, PRIV_HELPER, PRO_APP_PATTERN, STATE_DIR
+from config import (
+    CLEANER,
+    CREATIVE_BUNDLE_PATTERN,
+    MASTER_SETUP,
+    PLUGIN_SERVICE_AGENTS,
+    PRIV_HELPER,
+    PRO_APP_PATTERN,
+    STATE_DIR,
+)
 import context as ctx
 
 log = logging.getLogger("mek.services")
 UID = os.getuid()
 
-# Kurgu uygulamaları ve senkron Mach IPC yardımcıları (CEPHtmlEngine, dynamiclinkmanager, AdobeIPCBroker):
-# Bunlar ASLA taskpolicy -b (DARWIN_BG) altına alınmaz; aksi halde Premiere timeline kilidi (BE::WriteMutex)
-# öncelik tersinmesi (priority inversion) nedeniyle takılır!
-CREATIVE_PROTECT_RE = re.compile(
-    f"({CREATIVE_BUNDLE_PATTERN})|({PRO_APP_PATTERN})|"
-    r"CEPHtmlEngine|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub|PProHeadless|aerender"
-)
+# Kurgu uygulamaları, eklentiler (Red Giant, Maxon, BorisFX, Dehancer, FxFactory, Laforge, CEP/UXP)
+# ve bunların bağlı olduğu IPC/lisans/köprü servisleri:
+# Hangi sürümde (2026, 2030 vb.) olursa olsun ASLA taskpolicy -b (DARWIN_BG) altına alınmaz!
 CREATIVE_IPC_RE = re.compile(
-    r"CEPHtmlEngine|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub"
+    r"CEPHtmlEngine|UXP|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub|"
+    r"PProHeadless|aerender|AEGPUSniffer|Adobe Desktop Service|CCLibrary|CCXProcess|Core Sync|"
+    r"Creative Cloud|ACCFinderSync|Red Giant|Maxon|mxnotify|mxredirect|Magic Bullet|Trapcode|"
+    r"BorisFX|bfxdhelper|rlmserver|Sapphire|Continuum|Mocha|FxFactory|Dehancer|Laforge|"
+    r"Captioneer|AtomX|BeatEdit|PSEPremierePanel|FilmConvert|fusionscript|DPDecoder|"
+    r"Fairlight|neuroserver|veai|logioptionsplus|Camera Hub",
+    re.I,
+)
+CREATIVE_PROTECT_RE = re.compile(
+    f"({CREATIVE_BUNDLE_PATTERN})|({PRO_APP_PATTERN})|({CREATIVE_IPC_RE.pattern})",
+    re.I,
 )
 
 # Her zaman E-çekirdeklere (arka plan QoS) sabitlenecek sistem indeksleme süreçleri.
@@ -49,29 +63,84 @@ BG_CLAMP = re.compile(
     r"WallpaperAgent|WallpaperMacintoshExtension|WallpaperVideoExtension"
 )
 
-# Kurgu IPC'sine katılmayan Creative Cloud arka plan eşitleyicileri ve bulut servisleri:
+# Yalnızca kurgu ve eklenti ekosisteminin DIŞINDA kalan bulut/güncelleyici/telemetri süreçleri:
 BLOAT_CLAMP = re.compile(
-    r"CCXProcess|Creative Cloud Content Manager|Creative Cloud Helper|"
-    r"Core Sync|ACCFinderSync|CCLibrary|Adobe Crash Processor|CRLogTransport|"
-    r"Adobe Desktop Service|crashpad_handler|Red Giant|Maxon|Camera Hub|GoogleUpdater|"
+    r"Adobe Crash Processor|CRLogTransport|crashpad_handler|GoogleUpdater|"
     r"Dropbox|OneDrive|Google Drive|bird|cloudd|photolibraryd|cloudphotod"
 )
 
 PERF_CLAMP = BLOAT_CLAMP
 
-# Ana Adobe/kurgu uygulamaları kapandıktan sonra bellekte asılı kalabilen yetim süreçler
+# Ana Adobe/kurgu uygulamaları kapandıktan sonra bellekte asılı kalabilen yetim süreçler (yıldan bağımsız)
 ADOBE_MAIN_RE = re.compile(
-    r"Contents/MacOS/(Adobe Premiere Pro|After Effects|Adobe Media Encoder|Adobe Photoshop|"
-    r"Adobe Audition|Adobe Illustrator|Adobe Lightroom)"
+    r"Contents/MacOS/(Adobe Premiere[^/]*|After Effects[^/]*|Adobe After Effects[^/]*|"
+    r"Adobe Media Encoder[^/]*|Adobe Photoshop[^/]*|Photoshop[^/]*|Adobe Audition[^/]*|"
+    r"Adobe Illustrator[^/]*|Adobe Lightroom[^/]*)"
 )
 ORPHAN_HELPERS_RE = re.compile(
     r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|AI MACHINE Server|Adobe Crash Processor|CRLogTransport"
 )
 
-# Arka planda gerçek render/dışa aktarma motorları
+# Arka planda gerçek render/dışa aktarma motorları (yıldan/sürümden bağımsız)
 RENDER_ENGINE_RE = re.compile(
-    r"PProHeadless|Adobe Media Encoder|aerender|AEGPUSniffer|Topaz Video.*/(ffmpeg|neuroserver)|Compressor"
+    r"PProHeadless|Adobe Media Encoder|aerender|AEGPUSniffer|Topaz[^/]*.*/(ffmpeg|neuroserver)|Compressor"
 )
+
+_PLUGIN_DIRS = (
+    "/Library/OFX/Plugins",
+    "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore",
+    "/Library/Application Support/Adobe/CEP/extensions",
+    os.path.expanduser("~/Library/Application Support/Adobe/CEP/extensions"),
+    "/Library/Audio/Plug-Ins/VST3",
+    "/Library/Audio/Plug-Ins/Components",
+)
+
+
+def _discover_installed_plugin_rx():
+    """Sistemdeki eklenti klasörlerini tarayarak yeni kurulan veya güncellenen eklentilerin
+    isimlerini otomatik öğrenir (5 dakikada bir önbellekli)."""
+    tokens = set()
+    for d in _PLUGIN_DIRS:
+        try:
+            for entry in os.listdir(d):
+                if entry.startswith("."):
+                    continue
+                base = re.sub(r"\.(plugin|bundle|ofx\.bundle|aex|vst3|component)$", "", entry, flags=re.I)
+                base = re.sub(r"[-_v]+\d[\d._]*$", "", base).strip()
+                if len(base) >= 4:
+                    tokens.add(re.escape(base))
+        except OSError:
+            continue
+    if not tokens:
+        return None
+    return re.compile("|".join(sorted(tokens)), re.I)
+
+
+def is_creative_or_plugin(target):
+    """Verilen süreç adı/yolu bir kurgu uygulamasına, eklentiye veya eklenti servisine mi ait?"""
+    if not target:
+        return False
+    if CREATIVE_PROTECT_RE.search(target):
+        return True
+    dyn_rx = ctx._cached("dyn_plugin_rx", 300, _discover_installed_plugin_rx)
+    return bool(dyn_rx and dyn_rx.search(target))
+
+
+def _lineage_pids(root_pids, ppids):
+    """Aktif kurgu uygulamalarının başlattığı tüm alt/yardımcı/eklenti süreçlerini (ppid ağacı) bulur."""
+    if not root_pids or not ppids:
+        return set()
+    tree = set(root_pids)
+    changed = True
+    depth = 0
+    while changed and depth < 6:
+        changed = False
+        depth += 1
+        for pid, ppid in ppids.items():
+            if ppid in tree and pid not in tree:
+                tree.add(pid)
+                changed = True
+    return tree - set(root_pids)
 
 RENDER_CPU = 280.0     # 10 çekirdekli M1 Max'te çok çekirdekli gerçek render eşiği (boşta CEP spin'i ~150%'dir)
 IDLE_GRACE_S = 45      # önden çekildikten sonra performans kipinde kalma süresi
@@ -136,10 +205,10 @@ class ServiceManager:
         self.caff = None
         self.stopped_agents = []
         self.last_active = 0.0
-        self.boosted = set()          # Tam öncelikteki (nice 0, Tier-0 I/O) aktif kurgu süreçleri
-        self.parked_pro = set()       # Arka planda boşta bekleyen ikincil kurgu süreçleri (DARWIN_BG'ye sokulmaz, nice +4)
+        self.boosted = set()          # Tam öncelikteki (Tier-0 I/O ve gecikme) aktif kurgu süreçleri
+        self.parked_pro = set()       # Arka planda boşta bekleyen ikincil kurgu süreçleri (DARWIN_BG'ye sokulmaz)
         self.pro_last_active = {}     # pid -> son aktif (önde/render) zamanı
-        self.unthrottled_ipc = set()  # DARWIN_BG'den çıkarıldığı doğrulanmış kurgu IPC/CEP yardımcıları
+        self.unthrottled_ipc = set()  # DARWIN_BG'den çıkarıldığı doğrulanmış kurgu/eklenti/IPC yardımcıları
         self.clamped = set()          # E-çekirdeğe alınan bulut/eşitleme süreçleri
         self.bg_clamped = set()       # E-çekirdeğe alınan sistem indeksleme süreçleri
         self.next_guard = 0.0
@@ -148,30 +217,55 @@ class ServiceManager:
         self.last_front_pro = None
         self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
         priv("restore-high-power")
+        self._ensure_plugin_services()
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def _ensure_plugin_services(self):
+        """Red Giant, Maxon, BorisFX, Adobe ve Topaz eklenti servislerinin her zaman çalışır olmasını sağlar."""
+        for plist in PLUGIN_SERVICE_AGENTS:
+            if os.path.exists(plist):
+                _run(["/bin/launchctl", "bootstrap", f"gui/{UID}", plist])
+
+    def _safe_priv_perf(self):
+        """Eski kurulu mek-priv betiğinde com.redgiant.service varsa onu durdurmamak için normal çağrılır."""
+        try:
+            if os.path.exists(PRIV_HELPER):
+                with open(PRIV_HELPER, encoding="utf-8", errors="ignore") as f:
+                    if "redgiant" in f.read():
+                        priv("normal")
+                        return
+        except OSError:
+            pass
+        priv("perf")
+
     # --- yardımcı QoS işlemleri ---------------------------------------------------
-    def _unpark_pro(self, pid):
-        """Kurgu sürecini arka plan kısıtından çıkarır ve tam P-çekirdek/G-Ç önceliği (Tier-0) verir."""
+    def _unpark_pro(self, pid, snap=None):
+        """Kurgu sürecini ve alt süreç ağacını arka plan kısıtından çıkarıp tam P-çekirdek/Tier-0 önceliğine alır."""
         if pid in self.parked_pro or pid not in self.boosted:
             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
             self.parked_pro.discard(pid)
             self.boosted.add(pid)
             log.info("Kurgu süreci tam performansa alındı (P-çekirdek, Tier-0 I/O): pid=%d", pid)
+        if snap is not None and getattr(snap, "ppids", None):
+            for child_pid in _lineage_pids({pid}, snap.ppids):
+                if child_pid not in self.unthrottled_ipc:
+                    _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(child_pid)])
+                    self.unthrottled_ipc.add(child_pid)
 
-    def _park_pro(self, pid, name=""):
+    def _park_pro(self, pid, name="", secondary=False):
         """Arka planda boşta duran kurgu sürecini 'hazır/beklemede' olarak işaretler.
-        ÖNEMLİ: Kurgu süreçlerine ASLA taskpolicy -b (PRIO_DARWIN_BG) veya pozitif nice uygulanmaz;
-        macOS'ta root olmadan nice değeri geri düşürülemez ve DARWIN_BG Mach IPC öncelik tersinmesine yol açar."""
+        Başka bir kurgu uygulaması aktif olarak önde/render'daysa (secondary=True), geri alınabilir
+        Tier-3 throughput/latency kademesine (-B -t 3 -l 3) çeker; tek kurgu uygulaması açıksa Tier-0'da tutar.
+        ÖNEMLİ: Kurgu süreçlerine ASLA taskpolicy -b (PRIO_DARWIN_BG) veya pozitif nice uygulanmaz."""
         if pid not in self.parked_pro:
-            if pid not in self.boosted:
-                _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+            tier = "3" if secondary else "0"
+            _run(["/usr/sbin/taskpolicy", "-B", "-t", tier, "-l", tier, "-p", str(pid)])
             self.boosted.discard(pid)
             self.parked_pro.add(pid)
-            log.info("Arka planda boşta bekleyen kurgu süreci bekleme kipine alındı: %s (pid=%d)",
-                     name or "pro", pid)
+            log.info("Arka planda boşta bekleyen kurgu süreci bekleme kipine (Tier-%s) alındı: %s (pid=%d)",
+                     tier, name or "pro", pid)
 
     def smart_purge(self, reason="bellek baskısı"):
         """İnaktif dosya önbelleğini (Pages inactive) hız sınırlamalı olarak temizler."""
@@ -222,19 +316,21 @@ class ServiceManager:
             snap.front_pid = pid
 
         pro_procs = getattr(snap, "pro_procs", ()) if snap is not None else ()
-        focused_is_pro = False
+        focused_is_pro = any(
+            (ppid == pid) or (front_lower and (front_lower in app_of(exe).lower() or app_of(exe).lower() in front_lower))
+            for ppid, exe, _, _ in pro_procs
+        )
         for ppid, exe, cpu, _ in pro_procs:
             pname = app_of(exe).lower()
             is_this_front = (ppid == pid) or (front_lower and (front_lower in pname or pname in front_lower))
             if is_this_front:
-                focused_is_pro = True
                 self.pro_last_active[ppid] = now
-                self._unpark_pro(ppid)
+                self._unpark_pro(ppid, snap)
             else:
-                # Önden çekilen diğer kurgu uygulaması render yapmıyorsa ikincil önceliğe al
                 is_rendering = (cpu >= RENDER_CPU) or bool(RENDER_ENGINE_RE.search(exe) and cpu >= 50.0)
                 if not is_rendering:
-                    self._park_pro(ppid, app_of(exe))
+                    # Yalnızca başka bir kurgu uygulaması öndeyse (focused_is_pro=True) ikincil Tier-3'e al
+                    self._park_pro(ppid, app_of(exe), secondary=focused_is_pro)
 
         if focused_is_pro:
             if self.last_front_pro and self.last_front_pro != front_lower and snap is not None:
@@ -248,20 +344,21 @@ class ServiceManager:
         alive_bg = set()
         alive_bloat = set()
         alive_ipc = set()
+        lineage = _lineage_pids(getattr(snap, "pro_pids", ()), getattr(snap, "ppids", None)) if snap else set()
         for pid, name, cmd, cpu, _ in _iter_procs(snap):
             try:
                 target = cmd or name or ""
                 if ("WallpaperMacintoshExtension" in name or name == "siriactionsd") and cpu > 80.0:
                     os.kill(pid, signal.SIGKILL)
                     continue
-                # Kurgu paketleri ve senkron Mach IPC yardımcıları (CEPHtmlEngine, dynamiclinkmanager vb.)
-                # kesinlikle kısıtlanmaz; aksine kısıttan çıkarılır!
-                if CREATIVE_PROTECT_RE.search(target):
-                    if CREATIVE_IPC_RE.search(target):
+                # Kurgu paketleri, alt süreç ağaçları, eklentiler ve bağlı servisler (Red Giant, Maxon,
+                # BorisFX, Dehancer, FxFactory, CEPHtmlEngine, dynamiclinkmanager vb.) kesinlikle kısıtlanmaz;
+                # aksine tam performansa (Tier-0, P-çekirdek) açılır!
+                if pid in lineage or is_creative_or_plugin(target):
+                    if pid in lineage or CREATIVE_IPC_RE.search(target) or is_creative_or_plugin(target):
                         alive_ipc.add(pid)
                         if pid not in self.unthrottled_ipc:
                             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
-                            _renice_safe(pid, 0)
                     continue
                 if BG_CLAMP.search(target):
                     alive_bg.add(pid)
@@ -271,7 +368,6 @@ class ServiceManager:
                     alive_bloat.add(pid)
                     if pid not in self.clamped:
                         _run(["/usr/sbin/taskpolicy", "-b", "-p", str(pid)])
-                        _renice_safe(pid, 15)
             except (OSError, ValueError):
                 pass
         self.bg_clamped = alive_bg
@@ -318,16 +414,15 @@ class ServiceManager:
             {"performance": self.enter_performance, "ready": self.enter_ready,
              "normal": self.enter_normal}[target]()
 
-        # Aktif (öndeki veya render yapan) kurgu süreçlerini P-çekirdeklere aç,
-        # arka planda boşta bekleyen kurgu süreçlerini ise E-çekirdeklere park et!
+        # Aktif (öndeki veya render yapan) kurgu süreçlerini ve alt eklenti ağacını Tier-0'a aç,
+        # arka planda boşta bekleyen ikincil kurgu süreçlerini ise (başka bir kurgu aktifse) Tier-3'e al!
         for pid, exe, cpu, _ in getattr(snap, "pro_procs", ()):
             if pid in working_set:
-                self._unpark_pro(pid)
+                self._unpark_pro(pid, snap)
             else:
                 last_act = self.pro_last_active.get(pid, 0.0)
-                # Başka bir kurgu uygulaması öndeyse hemen, değilse BG_PARK_DELAY_S sonra E-çekirdeğe park et
                 if working_set or (now - last_act >= BG_PARK_DELAY_S):
-                    self._park_pro(pid, app_of(exe))
+                    self._park_pro(pid, app_of(exe), secondary=bool(working_set))
 
         # Bellek baskısı veya yüksek takas varsa ve son temizlikten beri süre geçtiyse önbelleği boşalt
         if snap.pro_pids and (getattr(snap, "pressure", 1) >= 2 or getattr(snap, "swap_gb", 0) >= 2.0):
@@ -357,7 +452,10 @@ class ServiceManager:
     def _stop_agents(self):
         if self.stopped_agents:
             return
+        protected = set(PLUGIN_SERVICE_AGENTS)
         for plist in self.cfg["deferrable_agents"]:
+            if plist in protected:
+                continue
             if os.path.exists(plist):
                 r = subprocess.run(["/bin/launchctl", "bootout", f"gui/{UID}", plist], capture_output=True)
                 if r.returncode == 0:
@@ -366,16 +464,18 @@ class ServiceManager:
     def enter_performance(self):
         previous, self.profile = self.profile, "performance"
         self._publish("performance")
+        self._ensure_plugin_services()
         self._stop_agents()
         if previous == "normal":
-            priv("perf")
+            self._safe_priv_perf()
 
     def enter_ready(self):
         previous, self.profile = self.profile, "ready"
         self._publish("ready")
+        self._ensure_plugin_services()
         self._stop_agents()
         if previous == "normal":
-            priv("perf")
+            self._safe_priv_perf()
 
     def _release_clamps(self):
         for pid in list(self.clamped):

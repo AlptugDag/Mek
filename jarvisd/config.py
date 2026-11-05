@@ -41,25 +41,53 @@ DEFAULTS = {
     "deferrable_agents": [
         "/Library/LaunchAgents/com.google.keystone.agent.plist",
         "/Library/LaunchAgents/com.google.keystone.xpcservice.plist",
-        "/Library/LaunchAgents/com.maxon.mxnotify.agent.plist",
-        "/Library/LaunchAgents/com.maxon.mxredirect.agent.plist",
         "/Library/LaunchAgents/com.displaylink.loginscreen.plist",
     ],
 }
 
-PRO_APP_PATTERN = (r"Contents/MacOS/(Resolve|Adobe Premiere Pro|Adobe Media Encoder|PProHeadless|"
-                   r"After Effects|aerender|Adobe Audition|Topaz Video|ffmpeg|neuroserver|Colourlab Ai|OBS|"
-                   r"Adobe Photoshop|Adobe Illustrator|Adobe Lightroom|Topaz Photo|Topaz Gigapixel|Gigapixel|"
-                   r"Final Cut Pro|Compressor|Logic Pro)"
-                   r"|DaVinci Resolve Helper")
-# Kullanıcının yaratıcı uygulamalarının paketleri: bunların hiçbir süreci (yardımcılar dahil) yavaşlatılmaz
-CREATIVE_BUNDLE_PATTERN = (r"^/Applications/(Adobe [^/]+|Topaz[^/]*|DaVinci Resolve[^/]*|Final Cut Pro[^/]*|"
-                           r"Logic Pro[^/]*|Compressor[^/]*|Colourlab[^/]*|OBS[^/]*|Blackmagic[^/]*)(/|$)")
+# Kurgu eklentilerinin (Red Giant, Maxon, BorisFX, Adobe, Topaz) bağlı olduğu ve her zaman çalışır tutulacak servisler
+PLUGIN_SERVICE_AGENTS = [
+    "/Library/LaunchAgents/com.maxon.mxnotify.agent.plist",
+    "/Library/LaunchAgents/com.maxon.mxredirect.agent.plist",
+    "/Library/LaunchAgents/com.borisfx.bfxdhelper.plist",
+    "/Library/LaunchAgents/com.adobe.AdobeDesktopService.plist",
+    "/Library/LaunchAgents/com.adobe.AdobeCreativeCloud.plist",
+    os.path.join(HOME, "Library/LaunchAgents/com.topazlabs.veai.nukepath.plist"),
+]
+
+# Yıl veya sürüm numarasından (2026, 2030 vb.) tamamen bağımsız ana kurgu/yaratıcı uygulama örüntüsü
+PRO_APP_PATTERN = (
+    r"Contents/MacOS/("
+    r"Resolve|DaVinci Resolve[^/]*|fusionscript|"
+    r"Adobe Premiere[^/]*|Adobe Media Encoder[^/]*|PProHeadless|After Effects[^/]*|Adobe After Effects[^/]*|aerender|"
+    r"Adobe Audition[^/]*|Adobe Photoshop[^/]*|Photoshop[^/]*|Adobe Illustrator[^/]*|Adobe Lightroom[^/]*|"
+    r"Adobe Character Animator[^/]*|Adobe Bridge[^/]*|Adobe InDesign[^/]*|"
+    r"Topaz Video[^/]*|Topaz Photo[^/]*|Topaz Gigapixel[^/]*|Gigapixel[^/]*|ffmpeg|neuroserver|"
+    r"Final Cut Pro[^/]*|Compressor[^/]*|Motion[^/]*|Logic Pro[^/]*|"
+    r"Cinema 4D[^/]*|Blender[^/]*|Colourlab[^/]*|OBS[^/]*|HandBrake[^/]*"
+    r")|DaVinci Resolve Helper"
+)
+
+# Kullanıcının yaratıcı uygulamaları, eklentileri ve eklenti servislerinin paket/dizinleri:
+# Hangi yılda/sürümde olursa olsun (2026, 2030 vb.) veya yeni eklenti eklendiğinde bunların hiçbir süreci yavaşlatılmaz
+CREATIVE_BUNDLE_PATTERN = (
+    r"^(/Applications/(Adobe [^/]+|Topaz[^/]*|DaVinci Resolve[^/]*|Blackmagic[^/]*|Final Cut[^/]*|"
+    r"Logic Pro[^/]*|Compressor[^/]*|Motion[^/]*|Colourlab[^/]*|OBS[^/]*|Maxon[^/]*|Red Giant[^/]*|"
+    r"Boris[^/]*|FxFactory[^/]*|Dehancer[^/]*|Cinema 4D[^/]*|Blender[^/]*)"
+    r"|/Library/Application Support/(Adobe|Blackmagic Design|Red Giant|Maxon|BorisFX|FxFactory|"
+    r"Dehancer|Topaz[^/]*|Pro Sound Effects|Laforge[^/]*|FilmConvert[^/]*)"
+    r"|/Library/OFX/Plugins"
+    r"|/Library/Audio/Plug-Ins"
+    r"|/Users/[^/]+/Library/Application Support/(Adobe|Blackmagic Design|Red Giant|Maxon|BorisFX|"
+    r"FxFactory|Dehancer|Topaz[^/]*))(/|$)"
+)
 RENDER_PROCS = {
-    "Topaz": r"Topaz Video.*/(ffmpeg|neuroserver)",
+    "Topaz": r"Topaz[^/]*.*/(ffmpeg|neuroserver)",
     "Media Encoder": r"Adobe Media Encoder",
     "After Effects": r"aerender|AEGPUSniffer",
     "Premiere (arka plan)": r"PProHeadless",
+    "Compressor": r"Contents/MacOS/Compressor",
+    "DaVinci Resolve": r"Contents/MacOS/Resolve",
 }
 
 

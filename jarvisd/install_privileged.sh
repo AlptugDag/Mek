@@ -8,7 +8,7 @@ install -d -o root -g wheel -m 755 /usr/local/libexec
 cat > /usr/local/libexec/mek-priv <<'H'
 #!/bin/bash
 # Mek ayrıcalıklı yardımcı: yalnızca sabit alt komutlar, dışarıdan yol/argüman almaz
-DAEMONS="/Library/LaunchDaemons/com.google.keystone.daemon.plist /Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist /Library/LaunchDaemons/com.logi.optionsplus.updater.plist /Library/LaunchDaemons/com.redgiant.service.plist"
+DAEMONS="/Library/LaunchDaemons/com.google.keystone.daemon.plist /Library/LaunchDaemons/com.google.GoogleUpdater.wake.system.plist /Library/LaunchDaemons/com.logi.optionsplus.updater.plist"
 HOSTS=/etc/hosts
 ADBLOCK_URL=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 HPM_STATE=/var/db/mek-highpowermode

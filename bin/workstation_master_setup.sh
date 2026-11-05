@@ -49,19 +49,53 @@ if ! pgrep -f "Contents/MacOS/Topaz Video" > /dev/null 2>&1; then
     defaults write "com.topazlabs.Topaz Video" allowAnonymousDataCollection -int 0 2>/dev/null
 fi
 
-# 4. Disable macOS App Nap timer coalescing for Pro Creative Apps so timeline scrubbing & playback never stutter
-for bid in \
-    "com.blackmagic-design.DaVinciResolve" \
-    "com.adobe.PremierePro.26" \
-    "com.adobe.PremierePro" \
-    "com.adobe.ame.application.26" \
-    "com.adobe.AfterEffects.application" \
-    "com.adobe.AfterEffects" \
-    "com.adobe.Audition" \
-    "com.adobe.Photoshop" \
-    "com.topazlabs.Topaz-Video" \
+# 4. Disable macOS App Nap timer coalescing for all Creative Apps, Plugins & Services
+# Dynamically discovers bundle IDs regardless of version year (2026, 2030, etc.) or newly added apps/plugins
+BIDS=(
+    "com.blackmagic-design.DaVinciResolve"
+    "com.adobe.PremierePro"
+    "com.adobe.AfterEffects"
+    "com.adobe.Photoshop"
+    "com.adobe.Audition"
+    "com.topazlabs.Topaz-Video"
     "com.topazlabs.Topaz Video"
-do
+    "com.redgiant.service"
+    "net.maxon.app-manager"
+    "com.borisfx.bfxdhelper"
+    "com.fxfactory.FxFactory"
+)
+
+for plist in "$HOME/Library/Preferences"/com.adobe.PremierePro*.plist \
+             "$HOME/Library/Preferences"/com.adobe.ame.application*.plist \
+             "$HOME/Library/Preferences"/com.adobe.AfterEffects*.plist \
+             "$HOME/Library/Preferences"/com.adobe.Photoshop*.plist \
+             "$HOME/Library/Preferences"/com.adobe.Audition*.plist \
+             "$HOME/Library/Preferences"/com.adobe.Illustrator*.plist \
+             "$HOME/Library/Preferences"/com.adobe.Lightroom*.plist \
+             "$HOME/Library/Preferences"/com.blackmagic-design.*.plist \
+             "$HOME/Library/Preferences"/com.topazlabs.*.plist \
+             "$HOME/Library/Preferences"/com.redgiant.*.plist \
+             "$HOME/Library/Preferences"/net.maxon.*.plist \
+             "$HOME/Library/Preferences"/com.borisfx.*.plist \
+             "$HOME/Library/Preferences"/com.fxfactory.*.plist; do
+    [ -f "$plist" ] || continue
+    bid="$(basename "$plist" .plist)"
+    BIDS+=("$bid")
+done
+
+for app_info in /Applications/Adobe*/*.app/Contents/Info.plist \
+                /Applications/Adobe*.app/Contents/Info.plist \
+                /Applications/Topaz*.app/Contents/Info.plist \
+                /Applications/DaVinci*/*.app/Contents/Info.plist \
+                /Applications/Maxon*.app/Contents/Info.plist \
+                /Applications/Boris*.app/Contents/Info.plist \
+                /Applications/FxFactory*.app/Contents/Info.plist; do
+    [ -f "$app_info" ] || continue
+    bid="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app_info" 2>/dev/null || true)"
+    [ -n "$bid" ] && BIDS+=("$bid")
+done
+
+for bid in "${BIDS[@]}"; do
     defaults write "$bid" NSAppSleepDisabled -bool YES 2>/dev/null || true
 done
 

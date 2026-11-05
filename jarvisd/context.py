@@ -173,18 +173,43 @@ def thermal_state():
 class Snapshot:
     __slots__ = ("t", "front", "front_pid", "idle", "cpu", "gpu", "mem_pct", "swap_gb", "disk_free_gb",
                  "pro_pids", "pro_procs", "render_cpu", "apps", "top_mem", "hot", "thermal", "pressure",
-                 "exes", "procs")
+                 "exes", "procs", "ppids")
 
 
-_PROC_CACHE = {}  # pid -> (create_time, name, cmd): süreç ömrü boyunca değişmeyen bilgileri önbellekle
+_PROC_CACHE = {}  # pid -> (create_time, name, cmd, ppid): süreç ömrü boyunca değişmeyen bilgileri önbellekle
+_SYSTEM_LIGHT_APPS = re.compile(r"/(Photos|Preview|QuickTime Player|Photo Booth|Screenshot|Freeform)\.app/")
+
+
+def _discover_creative_app_prefixes():
+    """/Applications altındaki video/fotoğraf/grafik tasarım uygulamalarını Info.plist kategorisinden
+    otomatik keşfeder (5 dakikada bir önbellekli). Böylece 2030 sürümü veya yeni kurulan bir kurgu programı
+    kod değişikliği gerekmeden otomatik olarak profesyonel kurgu uygulaması sayılır."""
+    import glob
+    import plistlib
+    prefixes = []
+    for plist_path in glob.glob("/Applications/*.app/Contents/Info.plist") + glob.glob("/Applications/*/*.app/Contents/Info.plist"):
+        if _SYSTEM_LIGHT_APPS.search(plist_path):
+            continue
+        try:
+            with open(plist_path, "rb") as f:
+                pl = plistlib.load(f)
+            cat = str(pl.get("LSApplicationCategoryType") or "")
+            exe = str(pl.get("CFBundleExecutable") or "")
+            if cat in ("public.app-category.video", "public.app-category.photography", "public.app-category.graphics-design") and exe:
+                app_macos_exe = os.path.join(os.path.dirname(plist_path), "MacOS", exe)
+                prefixes.append(app_macos_exe)
+        except Exception:
+            continue
+    return tuple(prefixes)
 
 
 def _proc_scan():
-    """Tek geçişte: kurgu süreçleri, render yükü, en çok bellek, CPU'yu yoranlar ve çalışan program yolları.
-    Aynı sürecin exe/cmdline bilgisi önbelleklenir; böylece her döngüde yüzlerce sysctl çağrısı yapılmaz."""
-    pro, pro_procs, render, mem, hot, exes, procs = [], [], {k: 0.0 for k in _RENDER_RE}, [], [], set(), []
+    """Tek geçişte: kurgu süreçleri, render yükü, en çok bellek, CPU'yu yoranlar, çalışan program yolları ve ppid ağacı.
+    Aynı sürecin exe/cmdline/ppid bilgisi önbelleklenir; böylece her döngüde yüzlerce sysctl çağrısı yapılmaz."""
+    pro, pro_procs, render, mem, hot, exes, procs, ppids = [], [], {k: 0.0 for k in _RENDER_RE}, [], [], set(), [], {}
     alive_pids = set()
-    for p in psutil.process_iter(["pid", "create_time", "name", "cpu_percent", "memory_info"]):
+    dyn_prefixes = _cached("dyn_creative_apps", 300, _discover_creative_app_prefixes)
+    for p in psutil.process_iter(["pid", "ppid", "create_time", "name", "cpu_percent", "memory_info"]):
         try:
             info = p.info
             pid = info["pid"]
@@ -192,9 +217,10 @@ def _proc_scan():
             ctime = info.get("create_time") or 0.0
             cached = _PROC_CACHE.get(pid)
             if cached and cached[0] == ctime:
-                name, cmd = cached[1], cached[2]
+                name, cmd, ppid = cached[1], cached[2], cached[3]
             else:
                 name = info.get("name") or ""
+                ppid = info.get("ppid") or 0
                 exe = info.get("exe")
                 if exe is None:
                     try:
@@ -211,16 +237,18 @@ def _proc_scan():
                         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                             cmdline = []
                     cmd = " ".join(cmdline or [])
-                _PROC_CACHE[pid] = (ctime, name, cmd)
+                _PROC_CACHE[pid] = (ctime, name, cmd, ppid)
             if not cmd and not name:
                 continue
+            ppids[pid] = ppid
             if cmd:
                 exes.add(cmd)
             cpu = info.get("cpu_percent") or 0.0
             mi = info.get("memory_info")
             rss = mi.rss if mi else 0
             procs.append((pid, name, cmd, cpu, rss))
-            if cmd and _PRO_RE.search(cmd):
+            is_pro = bool(cmd and (_PRO_RE.search(cmd) or (dyn_prefixes and cmd.startswith(dyn_prefixes))))
+            if is_pro:
                 pro.append(pid)
                 pro_procs.append((pid, cmd, cpu, rss))
             elif cpu > 120 and not _CREATIVE_BUNDLE_RE.search(cmd or ""):
@@ -237,7 +265,7 @@ def _proc_scan():
         for dead in set(_PROC_CACHE) - alive_pids:
             _PROC_CACHE.pop(dead, None)
     mem.sort(reverse=True)
-    return pro, pro_procs, render, mem[:8], hot, exes, procs
+    return pro, pro_procs, render, mem[:8], hot, exes, procs, ppids
 
 
 _slow = {}  # ad -> (zaman, değer): pahalı alt süreç sorguları her turda çalışmasın
@@ -265,7 +293,7 @@ def snapshot(events=None):
     s.swap_gb = psutil.swap_memory().used / 1024 ** 3
     st = os.statvfs("/System/Volumes/Data")
     s.disk_free_gb = st.f_bavail * st.f_frsize / 1024 ** 3
-    s.pro_pids, s.pro_procs, s.render_cpu, s.top_mem, s.hot, s.exes, s.procs = _proc_scan()
+    s.pro_pids, s.pro_procs, s.render_cpu, s.top_mem, s.hot, s.exes, s.procs, s.ppids = _proc_scan()
     s.apps = _cached("apps", 60, running_app_names)
     s.thermal = thermal_state()
     s.pressure = memory_pressure()

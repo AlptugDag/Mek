@@ -25,25 +25,41 @@ HOME = os.path.expanduser("~")
 
 APPS = {
     "photoshop": {"name": "Photoshop", "solo": 0.60, "min_gb": 8,
-                  "match": r"Contents/MacOS/Adobe Photoshop"},
+                  "match": r"Contents/MacOS/(Adobe )?Photoshop"},
     "adobe_video": {"name": "Premiere Pro / After Effects / Media Encoder", "solo": 0.70, "min_gb": 12,
-                    "match": r"Contents/MacOS/(Adobe Premiere Pro|After Effects|Adobe Media Encoder|"
-                             r"Adobe Audition|PProHeadless)"},
+                    "match": r"Contents/MacOS/(Adobe Premiere[^/]*|After Effects[^/]*|Adobe After Effects[^/]*|"
+                             r"Adobe Media Encoder[^/]*|Adobe Audition[^/]*|PProHeadless)"},
     "resolve": {"name": "DaVinci Resolve", "solo": 0.60, "min_gb": 12,
-                "match": r"Contents/MacOS/Resolve"},
+                "match": r"Contents/MacOS/(DaVinci )?Resolve"},
     "topaz_video": {"name": "Topaz Video", "solo": 0.55, "min_gb": 8,
                     "match": r"Contents/MacOS/Topaz Video"},
 }
 _MATCH = {k: re.compile(v["match"]) for k, v in APPS.items()}
 
 
-def plan(total_gb, running, reserve_gb=10, overcommit=1.2):
-    """Her uygulama için GB cinsinden sınır. running: şu an açık uygulama anahtarları."""
+def plan(total_gb, running, reserve_gb=10, overcommit=1.2, active=None):
+    """Her uygulama için GB cinsinden sınır.
+    running: şu an açık uygulama anahtarları.
+    active: şu an önde kullanılan veya aktif render yapan uygulama anahtarları (varsa 2.2x ağırlık alır)."""
     avail = max(8.0, total_gb - reserve_gb)
+    running_set = set(running or ())
+    active_set = set(active or ()) & running_set
     out = {}
     for key, spec in APPS.items():
-        others = len(set(running) - {key})
-        share = avail * overcommit / (others + 1)
+        others = len(running_set - {key})
+        if active_set and others > 0:
+            competitors = running_set | {key}
+            weights = {}
+            for c in competitors:
+                if c in active_set:
+                    weights[c] = 2.2
+                elif c == key and key not in running_set:
+                    weights[c] = 1.5
+                else:
+                    weights[c] = 1.0
+            share = avail * overcommit * (weights[key] / sum(weights.values()))
+        else:
+            share = avail * overcommit / (others + 1)
         solo = min(avail, total_gb * spec["solo"])
         out[key] = int(round(max(spec["min_gb"], min(solo, share))))
     return out
@@ -71,7 +87,10 @@ class MemoryBudget:
         return re.findall(r"(VMMemoryUsagePercent64\d+)\s*=\s*(\d+);", out)
 
     def _adobe_files(self):
-        return glob.glob(os.path.join(self.home, "Library/Preferences/Adobe/dynamiclinkmanager/*/memorybalancer*.xml"))
+        p1 = glob.glob(os.path.join(self.home, "Library/Preferences/Adobe/dynamiclinkmanager/*/memorybalancer*.xml"))
+        p2 = glob.glob(os.path.join(self.home, "Library/Preferences/Adobe/dynamiclinkmanager/**/memorybalancer*.xml"),
+                       recursive=True)
+        return sorted(set(p1 + p2))
 
     def _resolve_files(self):
         d = os.path.join(self.home, "Library/Preferences/Blackmagic Design/DaVinci Resolve")
@@ -129,29 +148,37 @@ class MemoryBudget:
                         _atomic_write(path, new, "latin-1")
 
     # ------------------------------------------------------------------ döngü
-    def tick(self, exes):
-        """Kapalı uygulamaların sınırlarını güncel duruma göre yeniden yazar. Değişiklik listesi döner."""
+    def tick(self, exes, active_exes=None):
+        """Kapalı uygulamaların ve Adobe DynamicLink havuzunun sınırlarını güncel çalışma/onem
+        durumuna göre dinamik olarak yeniden yazar. Değişiklik listesi döner."""
         running = running_apps(exes)
+        active = running_apps(active_exes) if active_exes else None
         target = plan(self.total_gb, running, self.cfg.get("memory_reserve_gb", 10),
-                      self.cfg.get("memory_overcommit", 1.2))
-        self.last_plan = {"running": sorted(running), "plan": target}
+                      self.cfg.get("memory_overcommit", 1.2), active=active)
+        self.last_plan = {"running": sorted(running), "active": sorted(active or ()), "plan": target}
         changes = []
         for key, gb in target.items():
             current = self.read(key)
             if current is None:
                 continue
             if key in running:
-                # Açık uygulamanın ayarına yalnızca aşırı şişkinse (ör. 64 GB'da 58 GB Adobe varsayılanı)
-                # kardeş uygulamalar (Media Encoder / After Effects) açılırken doğru sınırı okusun diye müdahale edilir.
-                if key != "adobe_video" or (current - gb) < 12:
+                # Adobe dynamiclinkmanager havuzu (Premiere / AE / Media Encoder / PProHeadless)
+                # çalışma ve önem durumuna göre dinamik olarak güncellenir:
+                if key != "adobe_video":
+                    continue
+                if active is None and (current - gb) < 12:
+                    continue
+                if active is not None and abs(current - gb) < 4 and (current - gb) < 12:
                     continue
             elif abs(current - gb) < 2:
                 continue
             try:
                 self.write(key, gb)
                 changes.append((key, round(current), gb))
-                log.info("Bellek sınırı: %s %d GB -> %d GB (açık: %s)", APPS[key]["name"], round(current), gb,
-                         ", ".join(sorted(running)) or "yok")
+                log.info("Bellek sınırı: %s %d GB -> %d GB (açık: %s, aktif: %s)",
+                         APPS[key]["name"], round(current), gb,
+                         ", ".join(sorted(running)) or "yok",
+                         ", ".join(sorted(active or ())) or "yok")
             except OSError as e:
                 log.warning("Bellek sınırı yazılamadı %s: %s", key, e)
         return changes
@@ -163,9 +190,11 @@ class MemoryBudget:
             if cur is not None:
                 parts.append(f"{spec['name']} {cur:.0f} GB")
         running = self.last_plan.get("running") or []
+        active = self.last_plan.get("active") or []
+        act_str = f" (aktif öncelikli: {', '.join(APPS[k]['name'] for k in active)})" if active else ""
         return (f"Toplam {self.total_gb:.0f} GB. Uygulama bellek sınırları: " + (", ".join(parts) or "ayar bulunamadı") +
-                f". Açık ağır uygulama: {', '.join(APPS[k]['name'] for k in running) or 'yok'}. "
-                "Sınırlar, açık uygulama sayısına göre bir sonraki açılış için otomatik ayarlanır.")
+                f". Açık ağır uygulama: {', '.join(APPS[k]['name'] for k in running) or 'yok'}{act_str}. "
+                "Sınırlar, açık uygulamaların aktif/bekleme önem sırasına göre dinamik ayarlanır.")
 
 
 def _atomic_write(path, text, encoding="utf-8"):

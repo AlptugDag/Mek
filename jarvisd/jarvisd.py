@@ -576,11 +576,13 @@ class Mek:
         seen = self.__dict__.setdefault("_hot", {})
         tamed = self.__dict__.setdefault("_tamed", set())
         alive = set()
+        lineage = services._lineage_pids(getattr(s, "pro_pids", ()), getattr(s, "ppids", None))
         for pid, name, cpu, cmd in s.hot:
             target = cmd or name or ""
             if (pid == os.getpid()
+                    or pid in lineage
                     or re.search(r"kernel_task|WindowServer|coreaudiod|launchd", name)
-                    or services.CREATIVE_PROTECT_RE.search(target)):
+                    or services.is_creative_or_plugin(target)):
                 continue
             alive.add(pid)
             seen[pid] = seen.get(pid, 0) + 1
@@ -740,7 +742,9 @@ class Mek:
                 self.observe(s)
                 self.questions.expire()
                 if getattr(s, "exes", None) and self.security._due("memory_budget", 30):
-                    self.memory_budget.tick(s.exes)
+                    w_pids = set(self.services.working_pids(s))
+                    active_exes = [exe for pid, exe, _, _ in getattr(s, "pro_procs", ()) if pid in w_pids]
+                    self.memory_budget.tick(s.exes, active_exes=active_exes)
                 if getattr(s, "pressure", 1) >= 2 and self.security._due("memory_relief", 120):
                     self.check_memory_relief(s)
                 busy = bool(s.pro_pids) or bool(self.renders.active())
@@ -874,8 +878,14 @@ class Mek:
             if len(parts) >= 2 and parts[1].isdigit():
                 pid = int(parts[1])
                 app_name = parts[2] if len(parts) > 2 else ""
+                snap = getattr(self, "snap", None)
                 if hasattr(self, "services") and self.services:
-                    self.services.on_focus_change(pid, app_name, getattr(self, "snap", None))
+                    self.services.on_focus_change(pid, app_name, snap)
+                if snap is not None and getattr(snap, "exes", None) and getattr(self, "memory_budget", None):
+                    w_pids = set(self.services.working_pids(snap))
+                    active_exes = [exe for ppid, exe, _, _ in getattr(snap, "pro_procs", ()) if ppid in w_pids]
+                    if active_exes:
+                        self.memory_budget.tick(snap.exes, active_exes=active_exes)
             return "ok"
 
         qbox = getattr(self, "questions", None)
