@@ -739,6 +739,7 @@ class Mek:
                 self.snap = s
                 self.services.tick(s, rendering=bool(self.renders.active())) # performans profili + QoS (her turda)
                 self.security.check_miners(s.hot)     # ek maliyetsiz
+                self.security.check_stealers(getattr(s, "procs", ()))  # sahte parola diyaloğu / keychain dökümü kalkanı
                 self.tame_runaways(s)
                 self.observe(s)
                 self.questions.expire()
@@ -765,6 +766,8 @@ class Mek:
                     threading.Thread(target=self.weather_tick, daemon=True).start()
                 if not busy and sec._due("persist", 900):
                     sec.audit_persistence()
+                if not busy and sec._due("download_gate", 60):
+                    threading.Thread(target=sec.scan_recent_downloads, daemon=True).start()
                 if sec._due("crash_reports", 60):
                     self.crash_monitor.scan()
                 if not busy and sec._due("posture", 6 * 3600):
@@ -1051,11 +1054,19 @@ class Mek:
             except OSError:
                 return "Günlük okunamadı."
             return "\n".join(lines[-n:]) or "Kayda değer olay yok."
-        if c.startswith("güvenlik"):
+        if c.startswith(("güvenlik", "guvenlik")):
             issues = self.security.posture()
+            shell_issues = self.security.audit_shell_and_cron()
+            dl_extra = ""
+            if "tara" in c or "scan" in c:
+                self.security.audit_persistence()
+                dl = self.security.scan_recent_downloads()
+                dl_extra = (f" İndirilenler tarandı ({dl['checked']} kurulum öğesi, "
+                            f"karantinaya alınan: {len(dl['quarantined'])}).")
             q = len(os.listdir(config.QUARANTINE)) - (1 if os.path.exists(os.path.join(config.QUARANTINE, "kayit.txt")) else 0)
+            shell_txt = (", kabuk/cron uyarısı: " + ", ".join(shell_issues)) if shell_issues else ", kabuk/cron temiz"
             return ("Güvenlik ayarları: " + (", ".join(issues) if issues else "hepsi açık") +
-                    f". Karantinada {max(0, q)} öğe var.")
+                    f"{shell_txt}. Karantinada {max(0, q)} öğe var.{dl_extra}")
         if c.startswith("söyle "):
             self.speak(cmd[6:])
             return "ok"

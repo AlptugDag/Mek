@@ -179,6 +179,37 @@ class UpdaterTests(unittest.TestCase):
         self.assertEqual(result["installed"], [])
         self.assertNotIn(["/brew", "upgrade", "--formula", "wget"], calls)
 
+    def test_custom_adhoc_and_creative_casks_are_not_overwritten(self):
+        import tempfile
+        calls = []
+        brew_json = json.dumps({"formulae": [], "casks": [
+            {"token": "davinci-resolve", "name": ["DaVinci Resolve"]},
+            {"token": "custom-tool", "name": ["Custom Tool"]},
+            {"token": "standard-tool", "name": ["Standard Tool"]},
+        ]})
+
+        def runner(args, **kwargs):
+            calls.append(args)
+            if args[1:4] == ["services", "list", "--json"]:
+                return SimpleNamespace(returncode=0, stdout="[]", stderr="")
+            if args[1:3] == ["outdated", "--json=v2"]:
+                return SimpleNamespace(returncode=0, stdout=brew_json, stderr="")
+            return SimpleNamespace(returncode=0, stdout="updated", stderr="")
+
+        with tempfile.TemporaryDirectory() as tmp_apps:
+            import os
+            os.makedirs(os.path.join(tmp_apps, "Custom Tool.app"))
+            os.makedirs(os.path.join(tmp_apps, "Standard Tool.app"))
+            sig_fn = lambda p: "adhoc" if "Custom Tool.app" in p else "signed"
+            result = update_third_party(
+                install=True, runner=runner, apps_dir=tmp_apps, sig_fn=sig_fn,
+                which=lambda name: "/brew" if name == "brew" else None
+            )
+
+        self.assertIn("DaVinci Resolve", result["protected_custom"])
+        self.assertIn("Custom Tool", result["protected_custom"])
+        self.assertEqual(result["installed"], ["Standard Tool"])
+
 
 if __name__ == "__main__":
     unittest.main()

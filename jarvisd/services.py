@@ -45,8 +45,8 @@ UID = os.getuid()
 # Adobe'nin pazarlama/reklam/telemetri alt süreçleri (%98 CPU yakabilen GrowthSDKHelper vb.):
 # Bunlar Creative Cloud klasörü altında çalışsa bile ASLA kurgu yardımcısı sayılmaz!
 ADOBE_MARKETING_BLOAT_RE = re.compile(
-    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|crashpad_handler|"
-    r"CCXProcess.*--type=renderer",
+    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|LogTransport2|"
+    r"crashpad_handler|CCXProcess.*--type=renderer",
     re.I,
 )
 
@@ -78,7 +78,7 @@ BG_CLAMP = re.compile(
 
 # Yalnızca kurgu ve eklenti ekosisteminin DIŞINDA kalan bulut/güncelleyici/telemetri süreçleri:
 BLOAT_CLAMP = re.compile(
-    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|crashpad_handler|"
+    r"GrowthSDKHelper|Adobe Notification Client|Adobe Crash Processor|CRLogTransport|LogTransport2|crashpad_handler|"
     r"GoogleUpdater|Dropbox|OneDrive|Google Drive|bird|cloudd|photolibraryd|cloudphotod"
 )
 
@@ -91,7 +91,7 @@ ADOBE_MAIN_RE = re.compile(
     r"Adobe Illustrator[^/]*|Adobe Lightroom[^/]*)"
 )
 ORPHAN_HELPERS_RE = re.compile(
-    r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|AI MACHINE Server|Adobe Crash Processor|CRLogTransport"
+    r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|AI MACHINE Server|Adobe Crash Processor|CRLogTransport|LogTransport2"
 )
 
 # Arka planda gerçek render/dışa aktarma motorları (yıldan/sürümden bağımsız)
@@ -386,9 +386,10 @@ class ServiceManager:
                 if ("WallpaperMacintoshExtension" in name or name == "siriactionsd") and cpu > 80.0:
                     os.kill(pid, signal.SIGKILL)
                     continue
-                if "GrowthSDKHelper" in target and cpu > 25.0:
+                if re.search(r"GrowthSDKHelper|Adobe Crash Processor|CRLogTransport|LogTransport2", target) and cpu > 25.0:
                     os.kill(pid, signal.SIGKILL)
-                    log.info("Adobe pazarlama süreci (GrowthSDKHelper) yüksek CPU nedeniyle sonlandırıldı: pid=%d (%%%.0f)", pid, cpu)
+                    log.info("Adobe telemetri/çökme raporlama süreci yüksek CPU nedeniyle sonlandırıldı: %s pid=%d (%%%.0f)",
+                             name or "helper", pid, cpu)
                     continue
                 # Kurgu paketleri, alt süreç ağaçları, eklentiler ve bağlı servisler (Red Giant, Maxon,
                 # BorisFX, Dehancer, FxFactory, CEPHtmlEngine, dynamiclinkmanager vb.) kesinlikle kısıtlanmaz;

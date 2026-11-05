@@ -33,15 +33,57 @@ MINER_NAMES = re.compile(r"xmrig|xmr-stak|minerd|cpuminer|cgminer|bfgminer|ethmi
                          r"kdevtmpfsi|kinsing|\bc3pool\b|moneroocean", re.I)
 MINER_ARGS = re.compile(r"stratum\+(tcp|ssl)://|--donate-level|--coin[= ](monero|xmr)|-a (rx/0|cryptonight)|"
                         r"pool\.(minexmr|supportxmr|hashvault)|nicehash|2miners|nanopool|f2pool", re.I)
+# Üçüncü taraf / resmi olmayan kurulum paketlerine (DMG/PKG/command) gizlenen macOS bilgi hırsızları
+# (AMOS / Atomic Stealer, Poseidon, Banshee, Cuckoo, XCSSET): sahte parola penceresi, keychain dökümü,
+# şifreli base64/curl kabuk boru hattı.
+STEALER_CMD_RE = re.compile(
+    r"osascript\b.*display\s+dialog\b.*with\s+hidden\s+answer|"
+    r"security\s+(dump-keychain|unlock-keychain|find-generic-password\s+-w)|"
+    r"(curl|wget)\s+[^|;\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|"
+    r"base64\s+(-D|-d|--decode)[^|;\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|"
+    r"\b(AtomicStealer|AMOS_stealer|PoseidonStealer|BansheeStealer|CuckooStealer|XCSSET)\b",
+    re.I | re.S,
+)
+SHELL_INJECTION_RE = re.compile(
+    r"(curl|wget)\s+[^#\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|"
+    r"base64\s+(-D|-d|--decode)[^#\n]*\|\s*(sudo\s+)?(ba|z)?sh\b|"
+    r"osascript\b[^\n]*with\s+hidden\s+answer|"
+    r"security\s+dump-keychain|"
+    r"nohup\s+(/tmp/|/private/tmp/|/var/tmp/|/Users/Shared/\.)[^\s#]+",
+    re.I,
+)
 INTERPRETERS = re.compile(r"^(python[\d.]*|Python|node|bash|zsh|sh|perl|ruby|java|osascript|deno|bun)$")
-PROTECTED = ("/System", "/usr/", "/bin", "/sbin", "/Applications", "/Library/Apple", "/opt/homebrew",
-             os.path.expanduser("~/.jarvis"))
+# Kurgu uygulamaları ve üçüncü taraf eklenti dizinleri (adhoc imzalı meşru eklentiler dahil)
+# hiçbir koşulda yanlış pozitif olarak karantinaya taşınmaz:
+PROTECTED = (
+    "/System",
+    "/usr/",
+    "/bin",
+    "/sbin",
+    "/Applications",
+    "/Library/Apple",
+    "/Library/Application Support",
+    "/Library/OFX/Plugins",
+    "/Library/Audio/Plug-Ins",
+    "/Library/Frameworks",
+    "/opt/homebrew",
+    os.path.expanduser("~/.jarvis"),
+    os.path.expanduser("~/Library/Application Support/Adobe"),
+)
 POOL_PORTS = {3333, 4444, 5555, 6666, 7777, 8888, 9999, 14433, 14444, 45560, 45700, 20535, 10128}
 SUSPICIOUS_DIRS = re.compile(r"^(/tmp|/private/tmp|/private/var/tmp|/Users/Shared|/var/folders)|/\.[^/]+/")
 PERSIST_GLOBS = [os.path.join(HOME, "Library/LaunchAgents/*.plist"), "/Library/LaunchAgents/*.plist",
                  "/Library/LaunchDaemons/*.plist"]
+SHELL_PROFILES = [
+    os.path.join(HOME, ".zshrc"),
+    os.path.join(HOME, ".zprofile"),
+    os.path.join(HOME, ".bash_profile"),
+    os.path.join(HOME, ".bashrc"),
+]
 BASELINE = os.path.join(STATE_DIR, "persist_baseline.json")
+SHELL_BASELINE = os.path.join(STATE_DIR, "shell_baseline.json")
 SCAN_STATE = os.path.join(STATE_DIR, "av_scan.json")
+DOWNLOAD_GATE_STATE = os.path.join(STATE_DIR, "download_gate.json")
 TRUSTED = os.path.join(STATE_DIR, "trusted_items.json")  # karantinadan geri alınan, bir daha dokunulmayacak öğeler
 
 
@@ -82,13 +124,37 @@ def signature(path):
 
 
 def _program_of(plist_path):
+    label, prog, _ = _plist_details(plist_path)
+    return label, prog
+
+
+def _plist_details(plist_path):
     try:
         with open(plist_path, "rb") as f:
             d = plistlib.load(f)
     except Exception:
-        return None, None
-    prog = d.get("Program") or (d.get("ProgramArguments") or [None])[0]
-    return d.get("Label"), prog
+        return None, None, ""
+    args = d.get("ProgramArguments") or []
+    prog = d.get("Program") or (args[0] if args else None)
+    full_args = " ".join(str(a) for a in args) if args else (str(prog) if prog else "")
+    return d.get("Label"), prog, full_args
+
+
+def inspect_script_text(text):
+    """Bir kabuk betiği / .command dosyası veya başlangıç satırında zararlı enjeksiyon var mı?"""
+    if not text:
+        return None
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if STEALER_CMD_RE.search(line):
+            return "bilgi hırsızı (stealer / sahte parola penceresi / keychain dökümü)"
+        if SHELL_INJECTION_RE.search(line):
+            return "şüpheli kabuk enjeksiyonu (gizli boru hattı / geçici dizin çalıştırması)"
+        if MINER_ARGS.search(line) or MINER_NAMES.search(line):
+            return "kripto madenci komutu"
+    return None
 
 
 class Security:
@@ -110,7 +176,7 @@ class Security:
             return True
         return False
 
-    # ------------------------------------------------------------------ madenci
+    # ------------------------------------------------------------------ madenci & bilgi hırsızı (stealer)
     def check_miners(self, hot):
         """hot: bağlam taramasından gelen (pid, ad, cpu, komut) — ek maliyet yok."""
         for pid, name, cpu, cmd in hot:
@@ -120,6 +186,27 @@ class Security:
                 full = cmd
             if MINER_NAMES.search(name) or MINER_NAMES.search(full) or MINER_ARGS.search(full):
                 self.neutralize(pid, name, full, "kripto madenci imzası")
+            elif STEALER_CMD_RE.search(full):
+                self.neutralize(pid, name, full, "bilgi hırsızı (stealer / sahte parola penceresi)")
+
+    def check_stealers(self, procs):
+        """Tüm aktif süreç tablosunda (s.procs) sahte parola diyaloğu, keychain dökümü veya
+        gizli kabuk boru hattı (AMOS / Poseidon / Banshee stealer) tarar — sıfır ek süreç tarama maliyeti."""
+        my_pid = os.getpid()
+        for item in procs or ():
+            pid = item[0]
+            name = item[1] if len(item) > 1 else ""
+            cmd = item[2] if len(item) > 2 else ""
+            if pid == my_pid or (cmd and cmd.startswith(MEK_HOME)):
+                continue
+            target = cmd or name or ""
+            if STEALER_CMD_RE.search(target):
+                try:
+                    full = " ".join(psutil.Process(pid).cmdline())
+                except Exception:
+                    full = target
+                if STEALER_CMD_RE.search(full):
+                    self.neutralize(pid, name or "stealer", full, "bilgi hırsızı (stealer / sahte parola penceresi)")
 
     def check_pool_connections(self):
         """Madencilik havuzu portlarına bağlanan süreçler (2 dakikada bir, ~0.3 sn)."""
@@ -233,7 +320,8 @@ class Security:
 
     # ------------------------------------------------------------------ kalıcılık
     def audit_persistence(self):
-        """Yeni başlangıç öğelerini taban çizgisiyle karşılaştırır (15 dakikada bir)."""
+        """Yeni başlangıç öğelerini, kabuk profillerini ve crontab'ı taban çizgisiyle karşılaştırır."""
+        self.audit_shell_and_cron()
         base = _load(BASELINE, None)
         current = {}
         for g in PERSIST_GLOBS:
@@ -249,24 +337,126 @@ class Security:
         for p, h in current.items():
             if base.get(p) == h or p in trusted:
                 continue
-            label, prog = _program_of(p)
+            label, prog, full_args = _plist_details(p)
             if is_own_item(label, prog):
                 continue
             sig = signature(prog) if prog else "missing"
-            suspicious = sig in ("unsigned", "adhoc") and prog and (
-                SUSPICIOUS_DIRS.search(prog) or MINER_NAMES.search(prog or ""))
+            script_issue = inspect_script_text(full_args)
+            suspicious = bool(script_issue) or (sig in ("unsigned", "adhoc") and prog and (
+                SUSPICIOUS_DIRS.search(prog) or MINER_NAMES.search(prog or "")))
             what = "yeni" if p not in base else "değişmiş"
             if suspicious and p.startswith(HOME):
                 subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", p], capture_output=True)
                 self.quarantine(p)
-                self._notify(f"Güvenlik: {what} bir başlangıç öğesi ({label}) imzasız ve şüpheli bir konumdan "
-                             "çalışıyordu. Devre dışı bırakıp karantinaya aldım.", urgent=True)
+                detail = f"({script_issue})" if script_issue else "imzasız ve şüpheli bir konumdan çalışıyordu"
+                self._notify(f"Güvenlik: {what} bir başlangıç öğesi ({label}) {detail}. "
+                             "Devre dışı bırakıp karantinaya aldım.", urgent=True)
             elif sig in ("unsigned", "adhoc") and not p.startswith(os.path.join(HOME, "Library/LaunchAgents/com.alptug")):
-                self._notify(f"Bilginiz olsun: {what} bir başlangıç öğesi eklendi, {label}. Programı imzasız. "
+                # Meşru kurgu/eklenti klasörlerindeki (/Applications, /Library/Application Support) adhoc öğeleri için
+                # yalnızca sakin bilgilendirme yapılır, asla karantinaya alınmaz.
+                self._notify(f"Bilginiz olsun: {what} bir başlangıç öğesi eklendi, {label}. Programı özel/imzasız. "
                              "Siz kurduysanız sorun yok.")
             else:
                 log.info("Başlangıç öğesi %s: %s (%s)", what, label, sig)
         _save(BASELINE, current)
+
+    def audit_shell_and_cron(self):
+        """Kabuk başlangıç dosyaları (~/.zshrc, ~/.zprofile vb.) ve crontab içinde truva/stealer enjeksiyonu denetler."""
+        base = _load(SHELL_BASELINE, {})
+        current = {}
+        findings = []
+        for path in SHELL_PROFILES:
+            if not os.path.isfile(path):
+                continue
+            try:
+                raw = open(path, "rb").read()
+                h = hashlib.sha1(raw).hexdigest()
+                current[path] = h
+                if base.get(path) != h:
+                    issue = inspect_script_text(raw.decode("utf-8", "ignore"))
+                    if issue:
+                        findings.append(f"{os.path.basename(path)}: {issue}")
+            except OSError:
+                pass
+        try:
+            r = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and r.stdout.strip():
+                h = hashlib.sha1(r.stdout.encode("utf-8", "ignore")).hexdigest()
+                current["crontab"] = h
+                if base.get("crontab") != h:
+                    issue = inspect_script_text(r.stdout)
+                    if issue:
+                        findings.append(f"crontab: {issue}")
+        except Exception:
+            pass
+        _save(SHELL_BASELINE, current)
+        if findings:
+            msg = "; ".join(findings)
+            log.warning("KABUK/CRON ENJEKSİYONU: %s", msg)
+            self._notify(f"Güvenlik uyarısı: Kabuk başlangıç dosyalarında şüpheli komut tespit edildi ({msg}). "
+                         "Kontrol etmenizi öneririm.", urgent=True)
+        return findings
+
+    def scan_recent_downloads(self):
+        """İndirilenler (~/Downloads) klasörüne yeni düşen .command, .sh, .pkg, .dmg kurulum dosyalarını
+        daha çalıştırılmadan önce truva/stealer betiklerine ve zararlı imzalarına karşı denetler."""
+        dl_dir = os.path.join(HOME, "Downloads")
+        if not os.path.isdir(dl_dir):
+            return {"checked": 0, "quarantined": []}
+        st = _load(DOWNLOAD_GATE_STATE, {"t": time.time() - 3600})
+        since = st.get("t", 0)
+        now = time.time()
+        quarantined = []
+        installer_bins = []
+        checked = 0
+        for dp, dn, fn in os.walk(dl_dir):
+            dn[:] = [d for d in dn if not d.startswith(".") and not d.endswith((".photoslibrary", ".fcpbundle"))]
+            for f in fn:
+                p = os.path.join(dp, f)
+                try:
+                    s = os.stat(p)
+                except OSError:
+                    continue
+                if s.st_mtime <= since:
+                    continue
+                low = f.lower()
+                if low.endswith((".command", ".sh", ".tool")) and s.st_size < 2 * 1024 * 1024:
+                    checked += 1
+                    try:
+                        text = open(p, encoding="utf-8", errors="ignore").read()
+                    except OSError:
+                        continue
+                    issue = inspect_script_text(text)
+                    if issue:
+                        dest = self.quarantine(p)
+                        quarantined.append(f)
+                        log.warning("İNDİRİLEN ZARARLI BETİK: %s (%s) -> %s", p, issue, dest)
+                        self._notify(f"Güvenlik: İndirilenler'deki {f} kurulum betiğinde {issue} tespit ettim. "
+                                     "Sisteme bulaşmadan karantinaya aldım.", urgent=True)
+                elif low.endswith((".dmg", ".pkg")) and s.st_size < 500 * 1024 ** 2:
+                    installer_bins.append(p)
+        st["t"] = now
+        _save(DOWNLOAD_GATE_STATE, st)
+        clam = shutil.which("clamscan") or "/opt/homebrew/bin/clamscan"
+        if installer_bins and os.path.exists(clam):
+            checked += len(installer_bins[:10])
+            db = "/opt/homebrew/var/lib/clamav"
+            cmd = ["nice", "-n", "20", clam, "--no-summary", "--infected", f"--database={db}"] + installer_bins[:10]
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                subprocess.run(["/usr/sbin/taskpolicy", "-b", "-p", str(proc.pid)], capture_output=True)
+                out, _ = proc.communicate(timeout=300)
+                for line in out.splitlines():
+                    m = re.match(r"(.+): (.+) FOUND$", line)
+                    if m:
+                        bname = os.path.basename(m.group(1))
+                        self.quarantine(m.group(1))
+                        quarantined.append(bname)
+                        self._notify(f"Güvenlik: Yeni indirilen {bname} paketinde zararlı yazılım ({m.group(2)}) "
+                                     "bulundu. Kurulmadan önce karantinaya aldım.", urgent=True)
+            except Exception as e:
+                log.warning("İndirilen paket taraması tamamlanamadı: %s", e)
+        return {"checked": checked, "quarantined": quarantined}
 
     # ------------------------------------------------------------------ güvenlik ayarları
     def posture(self):

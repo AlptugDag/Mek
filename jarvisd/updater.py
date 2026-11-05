@@ -10,6 +10,14 @@ LABEL = re.compile(r"^\s*\*\s*Label:\s*(.+?)\s*$", re.M)
 VERSION = re.compile(r"\bVersion:\s*([0-9]+(?:\.[0-9]+)+)", re.I)
 PACKAGE_TOKEN = re.compile(r"^[A-Za-z0-9@+_.-]+$")
 MAS_UPDATE = re.compile(r"^\s*(\d{4,})\s+(.+?)\s+\(([^()]*)\)\s*$")
+# Kullanıcının özel kurduğu kurgu/yaratıcı uygulamalar ve eklenti yöneticileri otomatik cask güncellemesiyle
+# ASLA üzerine yazılmaz (mevcut sürüm/eklenti/özel yapılandırma bozulmasın diye).
+CREATIVE_OR_CUSTOM_CASK_RE = re.compile(
+    r"\b(adobe|premiere|after[- ]?effects|photoshop|lightroom|audition|media[- ]?encoder|"
+    r"davinci|resolve|topaz|final[- ]?cut|logic[- ]?pro|compressor|motion|cinema[- ]?4d|"
+    r"maxon|red[- ]?giant|boris|fxfactory|dehancer|colourlab|filmconvert)\b",
+    re.I,
+)
 
 
 def find_tool(name, which=None):
@@ -171,11 +179,48 @@ def app_is_running(names, running_apps):
     return any(normalize(name) in active for name in names if name)
 
 
-def update_third_party(running_apps=(), install=False, refresh=True, allow_install=None, runner=None, which=None):
+def _default_app_signature(app_path):
+    if not app_path or not os.path.exists(app_path):
+        return "missing"
+    try:
+        r = subprocess.run(["codesign", "-dv", "--verbose=2", app_path],
+                           capture_output=True, text=True, timeout=15)
+        out = r.stderr or ""
+        if r.returncode != 0:
+            return "unsigned"
+        if "Signature=adhoc" in out:
+            return "adhoc"
+        return "signed"
+    except Exception:
+        return "unknown"
+
+
+def is_custom_or_protected_app(names, token="", apps_dir="/Applications", sig_fn=None):
+    """Kurgu/yaratıcı uygulamalar veya /Applications altında özel/adhoc imzayla kurulmuş paketler
+    arka planda otomatik güncellenerek üzerine yazılmaz."""
+    sig_fn = sig_fn or _default_app_signature
+    candidates = [str(n) for n in (names or ()) if n]
+    if token:
+        candidates.append(str(token))
+    for text in candidates:
+        if CREATIVE_OR_CUSTOM_CASK_RE.search(text):
+            return True
+    for name in (names or ()):
+        if not name:
+            continue
+        bundle = str(name) if str(name).endswith(".app") else f"{name}.app"
+        app_path = os.path.join(apps_dir, bundle)
+        if os.path.exists(app_path) and sig_fn(app_path) in ("adhoc", "unsigned"):
+            return True
+    return False
+
+
+def update_third_party(running_apps=(), install=False, refresh=True, allow_install=None, runner=None, which=None,
+                       apps_dir="/Applications", sig_fn=None):
     runner = runner or subprocess.run
     which = which or shutil.which
     allow_install = allow_install or (lambda: True)
-    result = {"checked": [], "installed": [], "deferred": [], "errors": []}
+    result = {"checked": [], "installed": [], "deferred": [], "protected_custom": [], "errors": []}
 
     brew = find_tool("brew", which)
     if brew:
@@ -194,6 +239,11 @@ def update_third_party(running_apps=(), install=False, refresh=True, allow_insta
         else:
             for item in parse_brew_outdated(outdated.stdout):
                 result["checked"].append(f"Homebrew {item['kind']}: {item['name']}")
+                if item["kind"] == "cask" and is_custom_or_protected_app(
+                        item["app_names"], item["token"], apps_dir=apps_dir, sig_fn=sig_fn):
+                    result["deferred"].append(item["name"])
+                    result["protected_custom"].append(item["name"])
+                    continue
                 if item["kind"] == "cask" and (not item["app_names"] or
                                                  app_is_running(item["app_names"], running_apps)):
                     result["deferred"].append(item["name"])
@@ -221,6 +271,10 @@ def update_third_party(running_apps=(), install=False, refresh=True, allow_insta
         else:
             for item in parse_mas_outdated(outdated.stdout):
                 result["checked"].append(f"App Store: {item['name']}")
+                if is_custom_or_protected_app([item["name"]], apps_dir=apps_dir, sig_fn=sig_fn):
+                    result["deferred"].append(item["name"])
+                    result["protected_custom"].append(item["name"])
+                    continue
                 if app_is_running([item["name"]], running_apps):
                     result["deferred"].append(item["name"])
                     continue
