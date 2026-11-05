@@ -502,10 +502,13 @@ class Mek:
     def observe(self, s):
         if isinstance(s.t, dt.datetime):
             now = s.t
+            now_s = s.t.timestamp()
         elif isinstance(s.t, (int, float)):
-            now = dt.datetime.fromtimestamp(s.t)
+            now_s = float(s.t)
+            now = dt.datetime.fromtimestamp(now_s)
         else:
             now = dt.datetime.now()
+            now_s = now.timestamp()
         today = dt.date.today()
         away = s.idle > self.cfg["away_threshold_s"]
 
@@ -534,12 +537,12 @@ class Mek:
                         urgent=True)
         self.was_away = away
 
-        for name, dur in self.renders.update(s.render_cpu, now):
+        for name, dur in self.renders.update(s.render_cpu, now_s):
             self.notify(f"{self.T}, {name} işi bitti, yaklaşık {int(dur // 60)} dakika sürdü.", urgent=True)
 
         if s.pro_pids and not away:
-            self.pro_session_start = self.pro_session_start or now
-            mins = (now - self.pro_session_start) / 60
+            self.pro_session_start = self.pro_session_start or now_s
+            mins = (now_s - self.pro_session_start) / 60
             if mins > self.cfg["break_after_min"] and self._once("break", 3600) and not self.renders.active():
                 self.notify(f"{self.T}, {int(mins)} dakikadır kesintisiz kurgudasınız; kısa bir mola iyi gelir.")
         else:
