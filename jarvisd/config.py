@@ -10,6 +10,7 @@ STATE_DIR = os.path.join(MEK_HOME, "state")
 QUARANTINE = os.path.join(MEK_HOME, "karantina")
 LOG_FILE = os.path.join(MEK_HOME, "jarvisd.log")
 SOCKET_PATH = os.path.join(MEK_HOME, "jarvis.sock")
+SIRI_PORT = 45728
 AI_BIN = os.path.join(MEK_HOME, "ai/jarvis-ai")             # Apple Intelligence legacy binary
 CLEANER = os.path.join(HOME, ".local/bin/smart_system_cleaner.sh")
 MASTER_SETUP = os.path.join(HOME, ".local/bin/workstation_master_setup.sh")
@@ -27,6 +28,14 @@ DEFAULTS = {
     "ups_shutdown_percent": 15,
     "ups_shutdown_minutes": 5,
     "event_alert_min": 10,
+    "morning_greeting_from_hour": 6,  # günün ilk selamı: siz başındaysanız bu saatten sonra sessiz saatte de söylenir
+    "speech_volume": 0.30,            # tüm seslendirmeler: Mac Studio hoparlöründe etkin %30
+    "speech_device": "mac studio",
+    "crash_alerts": "repeated",       # "off": hiç | "repeated": aynı uygulama 24 saatte 3+ kez çökerse tek sessiz bildirim
+    "memory_reserve_gb": 10,          # macOS + tarayıcı vb. için ağır uygulamalara hiç verilmeyen bellek
+    "memory_overcommit": 1.2,         # aynı anda açık uygulamalar nadiren aynı anda tepe yapar
+    "memory_relief": True,            # bellek sıkışınca boştaki ağır uygulama için soru sor
+    "trusted_processes": ["adb", "scrcpy"],  # havuz portu uyarısı verilmeyecek programlar
     "market_watchlist": [],           # ör. ["THYAO.IS", "AAPL"]
     "market_alert_pct": {"XU100.IS": 1.5, "TRY=X": 0.8, "GAU": 1.5, "BTC-USD": 4.0, "default": 3.0},
     "deferrable_agents": [
@@ -39,8 +48,13 @@ DEFAULTS = {
 }
 
 PRO_APP_PATTERN = (r"Contents/MacOS/(Resolve|Adobe Premiere Pro|Adobe Media Encoder|PProHeadless|"
-                   r"After Effects|aerender|Adobe Audition|Topaz Video|ffmpeg|neuroserver|Colourlab Ai|OBS)"
+                   r"After Effects|aerender|Adobe Audition|Topaz Video|ffmpeg|neuroserver|Colourlab Ai|OBS|"
+                   r"Adobe Photoshop|Adobe Illustrator|Adobe Lightroom|Topaz Photo|Topaz Gigapixel|Gigapixel|"
+                   r"Final Cut Pro|Compressor|Logic Pro)"
                    r"|DaVinci Resolve Helper")
+# Kullanıcının yaratıcı uygulamalarının paketleri: bunların hiçbir süreci (yardımcılar dahil) yavaşlatılmaz
+CREATIVE_BUNDLE_PATTERN = (r"^/Applications/(Adobe [^/]+|Topaz[^/]*|DaVinci Resolve[^/]*|Final Cut Pro[^/]*|"
+                           r"Logic Pro[^/]*|Compressor[^/]*|Colourlab[^/]*|OBS[^/]*|Blackmagic[^/]*)(/|$)")
 RENDER_PROCS = {
     "Topaz": r"Topaz Video.*/(ffmpeg|neuroserver)",
     "Media Encoder": r"Adobe Media Encoder",

@@ -40,6 +40,8 @@ from network_optimizer import NetworkOptimizer
 from agent import Agent
 from security import Security
 from services import ServiceManager
+from memory_budget import MemoryBudget
+from questions import QuestionBox, Question, Option, ai_classifier
 
 log = logging.getLogger("mek")
 PY = os.path.join(config.MEK_HOME, "venv/bin/python")
@@ -80,6 +82,13 @@ class Mek:
         self.last_activity_snapshot = None
         self.services = ServiceManager(self.cfg, events=self.events)
         self.security = Security(self.notify, events=self.events)
+        self.memory_budget = MemoryBudget(self.cfg)
+        self.questions = QuestionBox(
+            notify=self.notify,
+            speak=self.speak,
+            classify=ai_classifier(config.AI_BIN, subprocess.run),
+            state_path=os.path.join(config.STATE_DIR, "pending_question.json")
+        )
         self.crash_monitor = activity_monitor.CrashMonitor(
             state_path=os.path.join(config.STATE_DIR, "crash_reports.json"), events=self.events)
         self.power_guard = power.PowerGuard(
@@ -111,7 +120,24 @@ class Mek:
         report = payload["report"]
         name = report["name"].split("_", 1)[0].rsplit(".", 1)[0]
         log.warning("Uygulama çökme raporu: %s (%s)", name, report["name"])
-        self.notify(f"{name} uygulaması çöktü. Rapor: {report['name']}", title="Uygulama Çökmesi")
+        # Çöken raporları sesli okumak yerine arka planda sessizce gerekeni yap:
+        self._handle_crash_silently(name, report)
+
+    def _handle_crash_silently(self, name, report):
+        crashes = self.__dict__.setdefault("_crash_counts", {})
+        now = time.time()
+        counts = [t for t in crashes.get(name, []) if now - t < 86400] + [now]
+        crashes[name] = counts
+        if len(counts) >= 5:
+            log.warning("Süreç %s son 24 saatte %d kez çöktü; geçici dosyalar temizleniyor.", name, len(counts))
+            import glob
+            for pat in [f"/tmp/*{name}*", f"/private/tmp/*{name}*"]:
+                for f in glob.glob(pat):
+                    try:
+                        if os.path.isfile(f):
+                            os.unlink(f)
+                    except OSError:
+                        pass
 
     def _on_power_state_event(self, event, payload):
         state = payload["state"]
@@ -206,13 +232,9 @@ class Mek:
             try:
                 self.events.publish("speech.started", text=text)
                 log.info("SAY: %s", text)
-                busy = bool(self.renders.active())
-                if busy:  # render sürerken sıfır yük: macOS'un yerleşik sesi
-                    result = subprocess.run(["say", "-v", "Yelda", text], capture_output=True, text=True)
-                else:
-                    result = subprocess.run([PY, SPEAK, text], stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.PIPE, text=True,
-                                            preexec_fn=lambda: os.nice(5))
+                result = subprocess.run([PY, SPEAK, text], stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.PIPE, text=True,
+                                        preexec_fn=lambda: os.nice(5))
                 if result.returncode:
                     log.error("TTS başarısız (kod %d): %s", result.returncode, result.stderr.strip())
             except Exception:
@@ -221,19 +243,20 @@ class Mek:
                 self.events.publish("speech.finished", text=text)
                 self.speech_queue.task_done()
 
-    def notify(self, text, urgent=False, title="Mek"):
+    def notify(self, text, urgent=False, title="Mek", spoken_text=None):
         """Bildirim her zaman; sesli söyleme yalnızca uygunsa (sessiz saat, görüşme, aralık)."""
         self.events.publish("notification.created", text=text, urgent=urgent, title=title)
         subprocess.run(["osascript", "-e", f'display notification {json.dumps(text)} with title {json.dumps(title)}'],
                        capture_output=True)
+        to_say = spoken_text or text
         if self._speech_blocked() and not (urgent and not self._quiet_hours()):
             if self.snap and self.snap.idle > self.cfg["away_threshold_s"]:
-                self.away_events.append(text)
+                self.away_events.append(to_say)
             return
         if not urgent and (self._quiet_hours() or time.time() - self.last_spoke < self.cfg["proactive_min_gap_s"]):
             return
         self.last_spoke = time.time()
-        self.speak(text)
+        self.speak(to_say)
 
     def _once(self, key, gap):
         now = time.time()
@@ -477,13 +500,21 @@ class Mek:
 
     # ------------------------------------------------------------------ olaylar
     def observe(self, s):
-        now = s.t
+        if isinstance(s.t, dt.datetime):
+            now = s.t
+        elif isinstance(s.t, (int, float)):
+            now = dt.datetime.fromtimestamp(s.t)
+        else:
+            now = dt.datetime.now()
         today = dt.date.today()
         away = s.idle > self.cfg["away_threshold_s"]
 
-        # Queue the greeting before gathering any network-backed briefing details.
+        # Günün ilk selamı: Alptuğ Bey masaya oturduğunda (away değilken)
+        # sessiz saatte dahi olsa sabah saatlerinde (>= morning_greeting_from_hour) söylenir
         greeted = open(self.greet_file).read().strip() if os.path.exists(self.greet_file) else ""
-        if not away and not self._quiet_hours() and greeted != today.isoformat():
+        is_morning = now.hour >= self.cfg.get("morning_greeting_from_hour", 6)
+        can_greet = not away and (not self._quiet_hours() or is_morning)
+        if can_greet and greeted != today.isoformat():
             open(self.greet_file, "w").write(today.isoformat())
             greet = "Günaydın" if now.hour < 12 else "Tünaydın" if now.hour < 18 else "İyi akşamlar"
             self.speak(f"{greet} {self.T}. Mek hazır.")
@@ -647,6 +678,37 @@ class Mek:
         except Exception:
             return 1e12
 
+    def check_memory_relief(self, s):
+        services.priv("purge")
+        if not self.cfg.get("memory_relief", True) or s.idle > self.cfg["away_threshold_s"]:
+            return
+        front = (s.front or "").lower()
+        heavy_bg = []
+        for pid, exe, cpu, rss in getattr(s, "pro_procs", ()):
+            name = services.app_of(exe)
+            if front not in name.lower() and cpu < 15.0 and rss > 4 * 1024 ** 3:
+                heavy_bg.append((name, pid, rss / 1024 ** 3))
+        if heavy_bg:
+            app_name, pid, gb = heavy_bg[0]
+            qid = f"relief_{app_name.lower()}"
+
+            def do_quit():
+                subprocess.run(["osascript", "-e", f'tell application "{app_name}" to quit'], capture_output=True)
+                return f"{app_name} uygulamasına kapanma isteği iletildi; bellek boşalacak."
+
+            q = Question(
+                qid=qid,
+                text=f"Bellek baskısı yükseldi. Arka planda boşta duran {app_name} {gb:.1f} GB RAM tutuyor. Kapatmamı ister misiniz?",
+                options=[
+                    Option("kapat", f"{app_name}'ı kapat", run=do_quit, words=["kapat", "sonlandır", "evet", "onay"], polarity="yes"),
+                    Option("dokunma", "Açık kalsın", run=lambda: "Dokunulmadı, açık tutuluyor.", words=["dokunma", "kalsın", "hayır", "vazgeç"], polarity="no")
+                ],
+                default="dokunma",
+                ttl=600,
+                speak_text=f"Bellek baskısı yükseldi {self.T}. Arka planda boşta duran {app_name} {gb:.0f} gigabayt bellek tutuyor. Kapatmamı ister misiniz? Kapat ya da Dokunma diyebilirsiniz."
+            )
+            self.questions.ask(q, repeat_after=3600)
+
     # ------------------------------------------------------------------ döngüler
     def loop(self):
         while self.running:
@@ -654,10 +716,15 @@ class Mek:
             try:
                 s = ctx.snapshot(self.events)
                 self.snap = s
-                self.services.tick(s)                 # performans profili + QoS (her turda)
+                self.services.tick(s, rendering=bool(self.renders.active())) # performans profili + QoS (her turda)
                 self.security.check_miners(s.hot)     # ek maliyetsiz
                 self.tame_runaways(s)
                 self.observe(s)
+                self.questions.expire()
+                if getattr(s, "exes", None) and self.security._due("memory_budget", 30):
+                    self.memory_budget.tick(s.exes)
+                if getattr(s, "pressure", 1) >= 2 and self.security._due("memory_relief", 120):
+                    self.check_memory_relief(s)
                 busy = bool(s.pro_pids) or bool(self.renders.active())
                 idle = s.idle > 900
                 if time.monotonic() >= self.next_network_check:
@@ -734,11 +801,79 @@ class Mek:
             except Exception as e:
                 log.warning("Soket: %s", e)
 
+    def siri_http_loop(self):
+        """Siri ve macOS Kestirmeler için yerel HTTP köprüsü."""
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        from urllib.parse import urlparse, parse_qs
+        mek = self
+
+        class SiriHandler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                pass  # Sessiz
+
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                qs = parse_qs(parsed.query)
+                q = (qs.get("q", [""])[0] or qs.get("soru", [""])[0] or qs.get("text", [""])[0]).strip()
+
+                if mek.questions.pending() and q:
+                    handled, reply = mek.questions.answer(q)
+                    if handled:
+                        mek.speak(reply)
+                        self._reply(reply)
+                        return
+                elif mek.questions.pending() and not q:
+                    pending = mek.questions.pending()
+                    self._reply(f"{pending.text} {pending.choices_text()}.")
+                    return
+
+                if not q:
+                    reply = f"Mek hazır. Sistem durumu: {mek.command('durum')}"
+                else:
+                    reply = mek.command(q)
+                self._reply(reply)
+
+            def _reply(self, text):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write((text or "").encode("utf-8"))
+
+        try:
+            httpd = HTTPServer(("127.0.0.1", config.SIRI_PORT), SiriHandler)
+            httpd.serve_forever()
+        except Exception as e:
+            log.warning("Siri HTTP sunucusu başlatılamadı (port %s): %s", config.SIRI_PORT, e)
+
     def command(self, cmd):
-        c = cmd.lower()
+        c = cmd.lower().strip()
+        qbox = getattr(self, "questions", None)
+        # Bekleyen bir soru varsa ve kullanıcı yanıt verdiyse:
+        if qbox and qbox.pending():
+            c_clean = c.removeprefix("cevap ").strip()
+            handled, reply = qbox.answer(c_clean)
+            if handled:
+                self.speak(reply)
+                return reply
+
+        if c.startswith("cevap ") or c in ("soru", "sorular"):
+            if not qbox:
+                return "Soru yönetim kutusu etkin değil."
+            if c in ("soru", "sorular"):
+                return qbox.summary()
+            handled, reply = qbox.answer(cmd.split(None, 1)[1])
+            if handled:
+                self.speak(reply)
+            return reply
+
+        if c in ("bellek", "ram", "memory"):
+            mb = getattr(self, "memory_budget", None)
+            return mb.report() if mb else "Bellek yöneticisi etkin değil."
+
         if c in ("yardım", "yardim", "help"):
-            return ("Komutlar: brifing, durum, izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
-                    "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], "
+            return ("Komutlar: brifing, durum, bellek, izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
+                    "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], soru, cevap <seçenek>, "
                     "güncelle [kontrol|durum|şimdi], karantina [geri <no>], günlük [adet], sor <serbest soru> (ya da doğrudan yazın), onay, iptal, reklam [durum|aç|güncelle|kapat], sus <dakika>. "
                     "Yalnızca tanımlı ve güvenli eylemler yürütülür; Mek keyfî terminal komutu çalıştırmaz.")
         if c in ("güç", "guc", "power", "güç durumu", "guc durumu", "power status"):
@@ -897,6 +1032,7 @@ class Mek:
 
     def run(self):
         threading.Thread(target=self.socket_loop, daemon=True).start()
+        threading.Thread(target=self.siri_http_loop, daemon=True).start()
         log.info("Mek hazır")
         self.loop()
 

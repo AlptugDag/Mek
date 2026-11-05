@@ -140,6 +140,8 @@ class Security:
                     except Exception:
                         continue
                     # Havuz portu + yüksek işlemci ya da madenci argümanı = kesin; aksi hâlde yalnızca uyarı
+                    if name.lower() in ("adb", "scrcpy"):
+                        continue  # Android geliştirici araçları (port 5555) olağan geliştirme trafiğidir
                     if cpu > 80 or MINER_ARGS.search(full) or MINER_NAMES.search(full):
                         self.neutralize(pid, name, full, f"madencilik havuzu bağlantısı (port {port})")
                     elif ("pool", pid) not in self.reported:

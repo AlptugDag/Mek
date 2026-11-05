@@ -43,6 +43,27 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **İsteğe bağlı Gemini:** Apple Intelligence yetmezse ya da soruya `derin` ile başlarsanız Gemini kullanılır. Bunun için `~/.jarvis/jarvis.json` içine `"gemini_api_key": "..."` ekleyin (`chmod 600`; isteğe bağlı `"gemini_model"`). Gemini'ye yalnızca sorunuz, kısa durum özeti ve araç çıktıları gönderilir. Anahtar yoksa bulut hiç kullanılmaz.
 - **Sesle sorma:** Mikrofon sürekli dinlemez; yalnızca menüdeki "Sesle sor" tıklanınca en fazla 8 saniye açılır, çözümleme cihaz üzerinde yapılır.
 
+## Akıllı Seslendirme ve Mac Studio Hoparlörü
+- **Doğrudan Mac Studio Hoparlörü:** Mek tüm sesli bilgilendirmelerini kulaklık ya da harici monitör ses ayarlarından bağımsız olarak doğrudan Mac Studio'nun dahili hoparlörü üzerinden gerçekleştirir.
+- **Oynatılan Medyayı Bölmeyen %30 Ses Seviyesi:** Hoparlörde o an müzik, video veya başka bir medya oynatılıyorsa, sistemin donanım ses düzeyine ASLA dokunulmaz (medyanızın sesi kısılmaz ya da artmaz). Mek, kendi sesini dijital sinyal seviyesinde akıllıca ölçekleyerek hoparlörün net %30 seviyesine denk gelen berrak bir güçte duyurur.
+- **Günün İlk Karşılaması:** Sabah Alptuğ Bey masaya oturduğunda (ve hareket algılandığında), sessiz saat ayarından bağımsız olarak günaydın mesajı seslendirilir ve ardından günün ilk brifingi gelir.
+
+## Dinamik Bellek Bütçesi ve Kurgu Optimizasyonu
+- **Akıllı Kaynak Dağıtımı:** Premiere Pro, Photoshop, DaVinci Resolve ve Topaz Video gibi ağır uygulamalar aynı anda açık olsa bile bilgisayarın kasmaması için bellek bütçesi (`memory_budget.py`) açık uygulama sayısına göre otomatik kalibre edilir. Hiçbir uygulama tek başına tüm RAM'i işgal edip sistemi takas (swap) krizine sokamaz.
+- **Akıllı App Nap:** Yaratıcı uygulamalar arka planda boşta beklerken macOS App Nap mekanizması çalışır; böylece arka plandaki programlar ön plandaki çalışmanızı yavaşlatmaz. Yalnızca önde aktif kullanılırken veya arka planda render/dışa aktarma sürerken en yüksek performans önceliği verilir.
+- **Bellek Rahatlatma (Memory Relief):** Sistem genelinde bellek baskısı yükseldiğinde, inaktif önbellekler anında temizlenir (`purge`). Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
+
+## Çökme Yönetimi (Sessiz ve Eyleme Dayalı)
+- **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.
+- **Otomatik Arka Plan Bakımı:** Çökme raporları sessizce `crash_reports.json` içine işlenir. Bir süreç sürekli çökme döngüsüne girerse geçici kilit/önbellek dosyaları otomatik temizlenir. Kullanıcı dilediğinde `mek çökmeler` yazarak özeti metin olarak görebilir.
+
+## Soru-Cevap Mekanizması ve Siri Entegrasyonu
+- **Net Seçenekler:** Mek bir konuda karar gerektiğinde açık seçeneklerle sorar (örn. `kapat` / `dokunma`). Seçenekler seslendirilir ve anlaşılır yanıt beklenir.
+- **Çok Kanallı Yanıt:**
+  - Terminalden: `mek cevap kapat`, `mek evet`, `mek hayır`
+  - Menü çubuğundan: Soru olduğunda menü `Mek ❓` simgesini alır ve tek tıkla yanıtlanabilir butonlar sunar.
+  - Siri üzerinden: `bin/install_siri_shortcut.sh` çalıştırılarak Kestirmeler uygulamasına "Mek" eklenir. Artık "Hey Siri, Mek" denildiğinde soru doğrudan sesle yanıtlanabilir veya durum özeti alınabilir.
+
 ## Performans
 - **Kurgu sırasında:** Premiere, After Effects, Resolve, Topaz veya Media Encoder açıldığında devreye girer.
   - Bu uygulamaları en yüksek önceliğe alır.

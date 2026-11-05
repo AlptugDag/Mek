@@ -18,6 +18,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         add("Brifing", to: menu, action: #selector(runBriefing))
         add("Sistem durumu", to: menu, action: #selector(runStatus))
+        add("Bellek bütçesi", to: menu, action: #selector(runMemory))
         add("Piyasa izleme listesi", to: menu, action: #selector(runWatchlist))
         add("Güç durumu", to: menu, action: #selector(runPower))
         add("Güvenlik özeti", to: menu, action: #selector(runSecurity))
@@ -28,6 +29,50 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         add("Mek'i kapat", to: menu, action: #selector(quit))
         statusItem.menu = menu
+        startQuestionPolling()
+    }
+
+    private var lastPromptedQuestionId: String? = nil
+    private var questionPollTimer: Timer? = nil
+
+    private func startQuestionPolling() {
+        questionPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.checkPendingQuestion()
+            }
+        }
+    }
+
+    private func checkPendingQuestion() {
+        let path = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".jarvis/state/pending_question.json").path
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let qid = json["id"] as? String,
+              let text = json["text"] as? String,
+              let options = json["options"] as? [[String: String]] else {
+            if lastPromptedQuestionId != nil {
+                lastPromptedQuestionId = nil
+                statusItem.button?.title = "Mek"
+            }
+            return
+        }
+
+        statusItem.button?.title = "Mek ❓"
+        guard lastPromptedQuestionId != qid else { return }
+        lastPromptedQuestionId = qid
+
+        let alert = NSAlert()
+        alert.messageText = "Mek Soruyor"
+        alert.informativeText = text
+        for opt in options {
+            alert.addButton(withTitle: opt["label"] ?? opt["key"] ?? "Tamam")
+        }
+        let responseIdx = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        if responseIdx >= 0 && responseIdx < options.count {
+            let key = options[responseIdx]["key"] ?? ""
+            send("cevap " + key)
+        }
     }
 
     private func add(_ title: String, to menu: NSMenu, action: Selector) {
@@ -42,6 +87,10 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
     @objc private func runStatus() {
         send("durum")
+    }
+
+    @objc private func runMemory() {
+        send("bellek")
     }
 
     @objc private func runWatchlist() {

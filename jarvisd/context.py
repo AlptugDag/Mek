@@ -16,14 +16,31 @@ _RENDER_RE = {k: re.compile(v) for k, v in RENDER_PROCS.items()}
 
 
 def frontmost_app():
-    # NSWorkspace, runloop'u olmayan süreçte bayatlar; lsappinfo her seferinde taze bilgi verir
+    return front_info()[0]
+
+
+def front_info():
+    """(ön plandaki uygulamanın adı, pid). lsappinfo her seferinde taze bilgi verir
+    (NSWorkspace, runloop'u olmayan süreçte bayatlar)."""
     try:
         asn = subprocess.check_output(["lsappinfo", "front"], text=True).strip()
-        out = subprocess.check_output(["lsappinfo", "info", "-only", "name", asn], text=True)
+        out = subprocess.check_output(["lsappinfo", "info", "-only", "name", "-only", "pid", asn], text=True)
         m = re.search(r'"(?:LSDisplayName|name)"="([^"]*)"', out) or re.match(r'\s*"([^"]+)"', out)
-        return m.group(1) if m else ""
+        p = re.search(r"pid\s*=\s*(\d+)", out) or re.search(r'"pid"=(\d+)', out)
+        return (m.group(1) if m else ""), (int(p.group(1)) if p else None)
     except Exception:
-        return ""
+        return "", None
+
+
+def memory_pressure():
+    """1 normal, 2 uyarı, 4 kritik (çekirdeğin kendi bellek baskısı seviyesi; '% dolu' yanıltıcıdır,
+    macOS boş belleği önbellek olarak kullanır)."""
+    try:
+        out = subprocess.check_output(["/usr/sbin/sysctl", "-n", "kern.memorystatus_vm_pressure_level"],
+                                      text=True, timeout=5)
+        return int(out.strip() or 1)
+    except Exception:
+        return 1
 
 
 def running_app_names():
@@ -113,32 +130,36 @@ def thermal_state():
 
 
 class Snapshot:
-    __slots__ = ("t", "front", "idle", "cpu", "gpu", "mem_pct", "swap_gb", "disk_free_gb",
-                 "pro_pids", "render_cpu", "apps", "top_mem", "hot", "thermal")
+    __slots__ = ("t", "front", "front_pid", "idle", "cpu", "gpu", "mem_pct", "swap_gb", "disk_free_gb",
+                 "pro_pids", "pro_procs", "render_cpu", "apps", "top_mem", "hot", "thermal", "pressure", "exes")
 
 
 def _proc_scan():
-    pro, render, mem, hot = [], {k: 0.0 for k in _RENDER_RE}, [], []
+    """Tek geçişte: kurgu süreçleri, render yükü, en çok bellek, CPU'yu yoranlar ve çalışan program yolları."""
+    pro, pro_procs, render, mem, hot, exes = [], [], {k: 0.0 for k in _RENDER_RE}, [], [], set()
     for p in psutil.process_iter(["pid", "exe", "cmdline", "cpu_percent", "memory_info", "name"]):
         try:
             cmd = p.info["exe"] or " ".join(p.info["cmdline"] or [])
             if not cmd:
                 continue
+            exes.add(cmd)
             cpu = p.info["cpu_percent"] or 0.0
+            mi = p.info["memory_info"]
+            rss = mi.rss if mi else 0
             if _PRO_RE.search(cmd):
                 pro.append(p.info["pid"])
+                pro_procs.append((p.info["pid"], cmd, cpu, rss))
             elif cpu > 120:
                 hot.append((p.info["pid"], p.info["name"] or "", cpu, cmd))
             for k, rx in _RENDER_RE.items():
                 if rx.search(cmd):
                     render[k] += cpu
-            mi = p.info["memory_info"]
             if mi:
-                mem.append((mi.rss, p.info["name"] or ""))
+                mem.append((rss, p.info["name"] or ""))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
     mem.sort(reverse=True)
-    return pro, render, mem[:8], hot
+    return pro, pro_procs, render, mem[:8], hot, exes
 
 
 _slow = {}  # ad -> (zaman, değer): pahalı alt süreç sorguları her turda çalışmasın
@@ -157,7 +178,7 @@ def _cached(key, ttl, fn):
 def snapshot(events=None):
     s = Snapshot()
     s.t = time.time()
-    s.front = frontmost_app()
+    s.front, s.front_pid = front_info()
     s.idle = idle_seconds()
     s.cpu = psutil.cpu_percent(interval=None)
     s.gpu = _cached("gpu", 30, gpu_utilization)
@@ -166,9 +187,10 @@ def snapshot(events=None):
     s.swap_gb = psutil.swap_memory().used / 1024 ** 3
     st = os.statvfs("/System/Volumes/Data")
     s.disk_free_gb = st.f_bavail * st.f_frsize / 1024 ** 3
-    s.pro_pids, s.render_cpu, s.top_mem, s.hot = _proc_scan()
+    s.pro_pids, s.pro_procs, s.render_cpu, s.top_mem, s.hot, s.exes = _proc_scan()
     s.apps = _cached("apps", 60, running_app_names)
     s.thermal = thermal_state()
+    s.pressure = memory_pressure()
     if events:
         events.publish("system.snapshot", snapshot=s)
     return s

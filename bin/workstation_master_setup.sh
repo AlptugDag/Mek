@@ -27,21 +27,19 @@ if ! pgrep -f "Contents/MacOS/Resolve" > /dev/null 2>&1; then
     fi
     if [ -f "$RESOLVE_PREF_DIR/config.dat" ]; then
         sed -i '' \
-            -e 's|^Local.Resource.Buffers.1 = .*|Local.Resource.Buffers.1 = 49152|g' \
             -e 's|^Bg.Tasks.EnableBgTranscription = .*|Bg.Tasks.EnableBgTranscription = 0|g' \
             "$RESOLVE_PREF_DIR/config.dat" 2>/dev/null
     fi
     if [ -f "$RESOLVE_PREF_DIR/.config.data" ]; then
         sed -i '' \
-            -e 's|^Memory = .*|Memory = 49152|g' \
             -e 's|^Bg.Tasks.EnableBgTranscription = .*|Bg.Tasks.EnableBgTranscription = 0|g' \
             "$RESOLVE_PREF_DIR/.config.data" 2>/dev/null
     fi
 fi
 
 # 3. Enforce Topaz Video AI Peak Performance Settings (when Topaz is not running)
+# Memory is dynamically budgeted by Mek (memory_budget.py)
 if ! pgrep -f "Contents/MacOS/Topaz Video" > /dev/null 2>&1; then
-    defaults write "com.topazlabs.Topaz Video" maxMemoryUsage -int 100 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" gpuDeviceID -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" hardwareDecodingEnabled -int 1 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" powerSaverMode -int 0 2>/dev/null
@@ -49,11 +47,9 @@ if ! pgrep -f "Contents/MacOS/Topaz Video" > /dev/null 2>&1; then
     defaults write "com.topazlabs.Topaz Video" exportWithLivePreviewEnabled -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" fileLoggingEnabled -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" allowAnonymousDataCollection -int 0 2>/dev/null
-    defaults write "com.topazlabs.Topaz Video" NSAppSleepDisabled -bool YES 2>/dev/null
-    defaults write "com.topazlabs.Topaz-Video" NSAppSleepDisabled -bool YES 2>/dev/null
 fi
 
-# 4. Enforce App Nap Disabled Across All Pro Creative Apps
+# 4. App Nap: allow macOS native App Nap for idle background apps so they don't stutter foreground
 for bid in \
     "com.blackmagic-design.DaVinciResolve" \
     "com.adobe.PremierePro.26" \
@@ -62,13 +58,9 @@ for bid in \
     "com.adobe.Audition" \
     "com.adobe.Photoshop" \
     "com.topazlabs.Topaz-Video" \
-    "ai.colourlab.editor" \
-    "com.obsproject.obs-studio" \
-    "UVR" \
-    "com.rogueamoeba.farrago" \
-    "com.prosoundeffects.soundq"
+    "com.topazlabs.Topaz Video"
 do
-    defaults write "$bid" NSAppSleepDisabled -bool YES 2>/dev/null
+    defaults delete "$bid" NSAppSleepDisabled 2>/dev/null || true
 done
 
 # 5. Enforce Spotlight Exclusions (.metadata_never_index) on All Heavy Cache/Temp Folders

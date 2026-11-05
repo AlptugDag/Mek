@@ -86,8 +86,48 @@ def get_mac_studio_devices():
     return ca_id, sd_idx
 
 
+def get_mac_studio_hw_status(ca_id):
+    """
+    Mac Studio hoparlörünün anlık donanım sesini, sessize alınıp alınmadığını
+    ve o anda hoparlörden başka bir medya akıp akmadığını CoreAudio üzerinden öğrenir.
+    """
+    if not ca_id:
+        return 0.30, False, False
+    try:
+        vol_addr = AudioObjectPropertyAddress(
+            int.from_bytes(b"volm", "big"),
+            int.from_bytes(b"outp", "big"),
+            0,
+        )
+        vol = ctypes.c_float(0.0)
+        vsize = ctypes.c_uint32(ctypes.sizeof(vol))
+        coreaudio.AudioObjectGetPropertyData(ca_id, ctypes.byref(vol_addr), 0, None, ctypes.byref(vsize), ctypes.byref(vol))
+
+        mute_addr = AudioObjectPropertyAddress(
+            int.from_bytes(b"mute", "big"),
+            int.from_bytes(b"outp", "big"),
+            0,
+        )
+        mute = ctypes.c_uint32(0)
+        msize = ctypes.c_uint32(ctypes.sizeof(mute))
+        coreaudio.AudioObjectGetPropertyData(ca_id, ctypes.byref(mute_addr), 0, None, ctypes.byref(msize), ctypes.byref(mute))
+
+        run_addr = AudioObjectPropertyAddress(
+            int.from_bytes(b"gone", "big"),
+            int.from_bytes(b"glob", "big"),
+            int.from_bytes(b"mstr", "big"),
+        )
+        running = ctypes.c_uint32(0)
+        rsize = ctypes.c_uint32(ctypes.sizeof(running))
+        coreaudio.AudioObjectGetPropertyData(ca_id, ctypes.byref(run_addr), 0, None, ctypes.byref(rsize), ctypes.byref(run))
+
+        return float(vol.value), bool(mute.value), bool(running.value)
+    except Exception:
+        return 0.30, False, False
+
+
 def set_mac_studio_hardware_volume(ca_id, volume=TARGET_VOLUME):
-    """Sistemin genel sesini değiştirmeden sadece Mac Studio hoparlörünün sesini ayarlar."""
+    """Sistemin genel sesine dokunmadan sadece Mac Studio hoparlörünün donanım sesini ayarlar."""
     if not ca_id:
         return
     try:
@@ -349,14 +389,30 @@ def speak(text: str):
         # Akustik ekolayzır uygula
         audio_eq = apply_mac_studio_eq(speech.audio, fs=speech.sample_rate)
 
-        # Donanım çıkışı ve ses seviyesi kontrolü
+        # Donanım ve medya durumu denetimi
         ca_id, sd_idx = get_mac_studio_devices()
-        if ca_id is not None:
-            set_mac_studio_hardware_volume(ca_id, TARGET_VOLUME)
+        orig_vol, orig_muted, other_media_playing = get_mac_studio_hw_status(ca_id)
+
+        # Kural: Başka bir medya oynatılıyorsa donanım ses seviyesine ASLA DOKUNULMAZ!
+        # Ses, doğrudan dijital PCM sinyali üzerinde akıllıca ölçeklenir; böylece diğer medyanın sesi 1 dB bile değişmez.
+        restoration_needed = False
+        if other_media_playing:
+            effective_hw = max(0.05, orig_vol)
+            digital_scale = min(1.0, TARGET_VOLUME / effective_hw)
+            audio_eq = (audio_eq * digital_scale).astype(np.float32)
+            print(f"[Mek] Eşzamanlı medya tespit edildi. Donanım sesine dokunulmadı ({orig_vol*100:.0f}%). "
+                  f"Mek dijital olarak %30 duyulabilirlik düzeyine ({digital_scale*100:.0f}%) ölçeklendi.")
+        else:
+            if orig_muted or orig_vol < 0.05:
+                set_mac_studio_hardware_volume(ca_id, TARGET_VOLUME)
+                restoration_needed = True
+            elif abs(orig_vol - TARGET_VOLUME) > 0.05:
+                digital_scale = min(1.0, TARGET_VOLUME / max(0.05, orig_vol))
+                audio_eq = (audio_eq * digital_scale).astype(np.float32)
 
         pct = int(TARGET_VOLUME * 100)
         print(f"[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
-        print(f"[Mek] Genel ses kaynağına dokunulmadan doğrudan Mac Studio Hoparlörü üzerinden %{pct} seste çalınıyor...")
+        print(f"[Mek] Doğrudan Mac Studio Hoparlörü üzerinden %{pct} ses seviyesinde çalınıyor...")
 
         if sd_idx is not None:
             sd.play(audio_eq, samplerate=speech.sample_rate, device=sd_idx)
@@ -364,6 +420,14 @@ def speak(text: str):
         else:
             sd.play(audio_eq, samplerate=speech.sample_rate)
             sd.wait()
+
+        if restoration_needed and ca_id is not None:
+            if orig_muted:
+                mute_addr = AudioObjectPropertyAddress(
+                    int.from_bytes(b"mute", "big"), int.from_bytes(b"outp", "big"), 0)
+                m = ctypes.c_uint32(1)
+                coreaudio.AudioObjectSetPropertyData(ca_id, ctypes.byref(mute_addr), 0, None, ctypes.sizeof(m), ctypes.byref(m))
+            set_mac_studio_hardware_volume(ca_id, orig_vol)
 
         print("[Mek] Oynatma başarıyla tamamlandı.")
     except Exception as e:
