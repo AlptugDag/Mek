@@ -397,11 +397,17 @@ class Security:
                          "Kontrol etmenizi öneririm.", urgent=True)
         return findings
 
-    def scan_recent_downloads(self):
-        """İndirilenler (~/Downloads) klasörüne yeni düşen .command, .sh, .pkg, .dmg kurulum dosyalarını
-        daha çalıştırılmadan önce truva/stealer betiklerine ve zararlı imzalarına karşı denetler."""
-        dl_dir = os.path.join(HOME, "Downloads")
-        if not os.path.isdir(dl_dir):
+    def scan_recent_downloads(self, target_dirs=None):
+        """İndirilenler (~/Downloads) ve Masaüstü (~/Desktop) klasörlerine yeni düşen
+        .command, .sh, .tool, .pkg, .dmg kurulum dosyalarını daha çalıştırılmadan önce
+        truva/stealer betiklerine ve zararlı imzalarına karşı denetler."""
+        if target_dirs is None:
+            target_dirs = [
+                os.path.join(HOME, "Downloads"),
+                os.path.join(HOME, "Desktop"),
+            ]
+        valid_dirs = [d for d in target_dirs if d and os.path.isdir(d)]
+        if not valid_dirs:
             return {"checked": 0, "quarantined": []}
         st = _load(DOWNLOAD_GATE_STATE, {"t": time.time() - 3600})
         since = st.get("t", 0)
@@ -409,32 +415,33 @@ class Security:
         quarantined = []
         installer_bins = []
         checked = 0
-        for dp, dn, fn in os.walk(dl_dir):
-            dn[:] = [d for d in dn if not d.startswith(".") and not d.endswith((".photoslibrary", ".fcpbundle"))]
-            for f in fn:
-                p = os.path.join(dp, f)
-                try:
-                    s = os.stat(p)
-                except OSError:
-                    continue
-                if s.st_mtime <= since:
-                    continue
-                low = f.lower()
-                if low.endswith((".command", ".sh", ".tool")) and s.st_size < 2 * 1024 * 1024:
-                    checked += 1
+        for root_dir in valid_dirs:
+            for dp, dn, fn in os.walk(root_dir):
+                dn[:] = [d for d in dn if not d.startswith(".") and not d.endswith((".photoslibrary", ".fcpbundle", ".app"))]
+                for f in fn:
+                    p = os.path.join(dp, f)
                     try:
-                        text = open(p, encoding="utf-8", errors="ignore").read()
+                        s = os.stat(p)
                     except OSError:
                         continue
-                    issue = inspect_script_text(text)
-                    if issue:
-                        dest = self.quarantine(p)
-                        quarantined.append(f)
-                        log.warning("İNDİRİLEN ZARARLI BETİK: %s (%s) -> %s", p, issue, dest)
-                        self._notify(f"Güvenlik: İndirilenler'deki {f} kurulum betiğinde {issue} tespit ettim. "
-                                     "Sisteme bulaşmadan karantinaya aldım.", urgent=True)
-                elif low.endswith((".dmg", ".pkg")) and s.st_size < 500 * 1024 ** 2:
-                    installer_bins.append(p)
+                    if s.st_mtime <= since:
+                        continue
+                    low = f.lower()
+                    if low.endswith((".command", ".sh", ".tool")) and s.st_size < 2 * 1024 * 1024:
+                        checked += 1
+                        try:
+                            text = open(p, encoding="utf-8", errors="ignore").read()
+                        except OSError:
+                            continue
+                        issue = inspect_script_text(text)
+                        if issue:
+                            dest = self.quarantine(p)
+                            quarantined.append(f)
+                            log.warning("İNDİRİLEN ZARARLI BETİK: %s (%s) -> %s", p, issue, dest)
+                            self._notify(f"Güvenlik: {f} kurulum betiğinde {issue} tespit ettim. "
+                                         "Sisteme bulaşmadan karantinaya aldım.", urgent=True)
+                    elif low.endswith((".dmg", ".pkg")) and s.st_size < 500 * 1024 ** 2:
+                        installer_bins.append(p)
         st["t"] = now
         _save(DOWNLOAD_GATE_STATE, st)
         clam = shutil.which("clamscan") or "/opt/homebrew/bin/clamscan"

@@ -10,11 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.5-green" alt="v0.0.0.5">
+  <img src="https://img.shields.io/badge/version-0.0.0.7-green" alt="v0.0.0.7">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.5:** 400 GB/s APFS RAM-Disk (**Ultra-Scratch** — `Peak Files`, `Media Cache`, `PTX` için sıfır gecikmeli RAM önbellek ve kalıcı SSD aynası), APFS Copy-on-Write (`cp -c`) **Sıfır Disk Alanlı Proje Zaman Makinesi** (`project_timemachine.py`), AppleSMC doğrudan sensör telemetrili **Akıllı Sessiz Termal & Fan Yöneticisi** (`thermal_fan.py` — 50°C altında 1100 RPM sessiz kip, 52°C'de anında otomatik SMC soğutma), Metal Heap GPU havuzu ve 400 GB/s RAM ön-ısıtıcı (`prewarmer.py`) devrede. Önceki sürümler: [`v0.0.0.4`](https://github.com/AlptugDag/Mek/tree/v0.0.0.4), [`v0.0.0.3`](https://github.com/AlptugDag/Mek/tree/v0.0.0.3), [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2).
+> **v0.0.0.7:** İndirilenler (`~/Downloads`) ve Masaüstü (`~/Desktop`) Ön-Kapı Denetimi (`scan_recent_downloads` — yeni inen `.command`, `.sh`, `.tool`, `.dmg` ve `.pkg` dosyalarını çalıştırılmadan önce stealer/madenci imzalarına karşı tarar), Gerçek Zamanlı Stealer Kalkanı, Kabuk/Crontab Arka Kapı Denetimi (`~/.zshrc`, `~/.zprofile`, `crontab`), Özel/Ad-Hoc Kurgu Eklentisi Koruma Kalkanı ve Özel Sürüm Korumalı Güncelleyici devrede. Önceki sürümler: [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6), [`v0.0.0.5`](https://github.com/AlptugDag/Mek/tree/v0.0.0.5), [`v0.0.0.4`](https://github.com/AlptugDag/Mek/tree/v0.0.0.4).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -117,8 +117,10 @@ Eski kurulum dosyaları ve aylardır açılmamış büyük dosyalar silinmez, ya
 - Activity Monitor raporları, çökmeler, güç, güncelleme ve güvenlik bildirimleri ortak Mek event kanalından TTS bildirimlerine aktarılır. `mek etkinlik sesli` anlık CPU/bellek özetini seslendirir.
 
 ## Güvenlik
-- **Kripto madenciler:** İmza, komut satırı ya da havuz bağlantısıyla tespit edilir. Süreç durdurulur, dosyası ve onu başlatan ajan karantinaya alınır.
-- **Başlangıç öğeleri:** Yeni eklenenler 15 dakikada bir denetlenir. İmzasız ve şüpheli konumdan çalışan bir öğe devre dışı bırakılır.
+- **Kripto madenciler ve Bilgi Hırsızları (Stealer Kalkanı):** İmza, komut satırı (`with hidden answer` sahte parola penceresi, `dump-keychain`, `Cookies`/`Login Data` hırsızlığı, `base64 | sh`) ya da havuz bağlantısıyla tespit edilir. Süreç anında durdurulur, dosyası ve onu başlatan ajan karantinaya alınır.
+- **İndirilenler ve Masaüstü Ön-Kapı Denetimi (`~/Downloads` & `~/Desktop`):** Hem İndirilenler hem de Masaüstü klasörüne yeni düşen `.command`, `.sh`, `.tool`, `.dmg` ve `.pkg` dosyaları daha çalıştırılmadan önce arka planda (E-çekirdeklerde) taranır.
+- **Başlangıç Öğeleri ve Kabuk/Cron Denetimi:** Yeni eklenen `LaunchAgents` öğeleri ile `~/.zshrc`, `~/.zprofile`, `~/.bash_profile`, `~/.bashrc` ve `crontab` değişiklikleri 15 dakikada bir denetlenir.
+- **Özel/Ad-Hoc Kurgu ve Eklenti Koruması:** `/Applications`, `/Library/Application Support/Adobe`, `Plug-ins`, `VST3`, `Audio/Plug-Ins` ve `OFX` altındaki özel/yama uygulanmış kurgu programları ve eklentiler korunur; yanlış alarmla karantinaya alınmaz ve Homebrew güncellemelerinde üzerine yazılmaz.
 - **Dosya taraması:** ClamAV, siz bilgisayar başında değilken yeni indirmeleri en düşük öncelikte tarar; virüs veritabanı günde bir kez güncellenir.
 - **Güvenlik ayarları:** SIP, Gatekeeper, FileVault, güvenlik duvarı ve XProtect izlenir. Mek bu ayarları değiştirmez, kapanırsa size söyler.
 - Hiçbir dosya silinmez. Şüpheli dosyalar `~/.jarvis/karantina` klasörüne taşınır.

@@ -1,6 +1,8 @@
 import os
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "jarvisd"))
 import security  # noqa: E402
@@ -34,6 +36,32 @@ class OwnItemTest(unittest.TestCase):
         # Normal macOS bildirimleri stealer sayılmaz:
         self.assertIsNone(security.inspect_script_text('osascript -e \'display notification "Render bitti" with title "Mek"\''))
         self.assertIsNone(security.inspect_script_text("export PATH=/opt/homebrew/bin:$PATH"))
+
+    def test_scan_recent_downloads_covers_both_downloads_and_desktop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dl_dir = os.path.join(tmp, "Downloads")
+            dt_dir = os.path.join(tmp, "Desktop")
+            q_dir = os.path.join(tmp, "karantina")
+            os.makedirs(dl_dir)
+            os.makedirs(dt_dir)
+            os.makedirs(q_dir)
+
+            evil_desktop = os.path.join(dt_dir, "Patch_Install.command")
+            with open(evil_desktop, "w", encoding="utf-8") as f:
+                f.write('#!/bin/bash\nosascript -e \'display dialog "Password" default answer "" with hidden answer\'\n')
+
+            clean_dl = os.path.join(dl_dir, "install_helper.sh")
+            with open(clean_dl, "w", encoding="utf-8") as f:
+                f.write("#!/bin/bash\necho 'Hello clean world'\n")
+
+            sec = security.Security(lambda *a, **kw: None)
+            with patch.object(security, "QUARANTINE", q_dir), \
+                 patch.object(security, "DOWNLOAD_GATE_STATE", os.path.join(tmp, "dl_gate.json")):
+                res = sec.scan_recent_downloads(target_dirs=[dl_dir, dt_dir])
+                self.assertEqual(res["checked"], 2)
+                self.assertIn("Patch_Install.command", res["quarantined"])
+                self.assertFalse(os.path.exists(evil_desktop))
+                self.assertTrue(os.path.exists(clean_dl))
 
 
 if __name__ == "__main__":
