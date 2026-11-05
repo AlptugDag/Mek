@@ -162,6 +162,9 @@ class Agent:
         def viral_hook(args):
             yol = str(args.get("yol", "")).strip()
             metin = str(args.get("metin", "")).strip() or None
+            if not yol or not os.path.exists(yol):
+                # Doğrudan Premiere Pro açık timeline'ına ilk 3sn viral hook uygula
+                return m.kurgu.apply_viral_hook_in_premiere(title=metin or yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
             return m.kurgu.extract_viral_hook(yol, transcript=metin) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
 
         T = {

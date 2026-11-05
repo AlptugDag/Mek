@@ -1028,17 +1028,29 @@ class Mek:
 
         if c.startswith("kurgu hook"):
             parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu hook /yol/video.mp4 [--key GEMINI_KEY]"
             if not hasattr(self, "kurgu") or not self.kurgu:
                 return "Kurgu yöneticisi etkin değil."
+            if len(parts) < 3:
+                # Parametresiz: Doğrudan Premiere Pro timeline'ının ilk 3 saniyesine viral hook uygula!
+                return self.kurgu.apply_viral_hook_in_premiere()
             rest = parts[2].strip()
+            # Eğer parametre bir dosya yolu değilse başlık olarak kabul et ve Premiere'e bas
+            if not os.path.exists(rest) and not rest.startswith("/"):
+                return self.kurgu.apply_viral_hook_in_premiere(title=rest)
             key = None
             if "--key" in rest:
                 v_part, k_part = rest.split("--key", 1)
                 rest = v_part.strip()
                 key = k_part.strip()
             return self.kurgu.extract_viral_hook(rest, gemini_key=key)
+
+        if c.startswith(("kurgu timeline", "kurgu analiz")):
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            res = self.kurgu.analyze_premiere_timeline()
+            if "error" in res:
+                return f"Hata: {res['error']}"
+            return f"Premiere Pro Timeline: '{res.get('name', 'Sekans')}' ({res.get('width', 1080)}x{res.get('height', 1920)}, {res.get('fps', 25)} fps)."
 
         if c.startswith("kurgu oto"):
             parts = cmd.split(None, 2)
@@ -1249,11 +1261,21 @@ class Mek:
     def run(self):
         threading.Thread(target=self.socket_loop, daemon=True).start()
         threading.Thread(target=self.siri_http_loop, daemon=True).start()
+        if hasattr(self, "kurgu") and self.kurgu and hasattr(self.kurgu, "gateway"):
+            try:
+                self.kurgu.gateway.start()
+            except Exception as e:
+                log.warning("Mek Premiere Gateway başlatılamadı: %s", e)
         log.info("Mek hazır")
         self.loop()
 
     def stop(self, *_):
         self.running = False
+        if hasattr(self, "kurgu") and self.kurgu and hasattr(self.kurgu, "gateway"):
+            try:
+                self.kurgu.gateway.stop()
+            except Exception:
+                pass
         self.services.shutdown()
         sys.exit(0)
 

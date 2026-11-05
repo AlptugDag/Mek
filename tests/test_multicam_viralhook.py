@@ -12,6 +12,7 @@ import wave
 import struct
 import math
 import json
+import time
 from unittest.mock import patch, MagicMock
 
 # Add jarvisd to sys.path
@@ -45,6 +46,8 @@ class TestMulticamDirector(unittest.TestCase):
         self.tmp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
+        if hasattr(self, "km") and hasattr(self.km, "gateway"):
+            self.km.gateway.stop()
         import shutil
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
@@ -110,6 +113,8 @@ class TestViralHookSynthesizer(unittest.TestCase):
         self.tmp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
+        if hasattr(self, "km") and hasattr(self.km, "gateway"):
+            self.km.gateway.stop()
         import shutil
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
@@ -194,6 +199,8 @@ class TestKurguManagerIntegration(unittest.TestCase):
         self.tmp_dir = tempfile.mkdtemp()
 
     def tearDown(self):
+        if hasattr(self, "km") and hasattr(self.km, "gateway"):
+            self.km.gateway.stop()
         import shutil
         shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
@@ -207,9 +214,54 @@ class TestKurguManagerIntegration(unittest.TestCase):
         msg_mc = self.km.direct_multicam([c1, c2], "dinamik podcast")
         self.assertIn("kurgu tamamlandı", msg_mc)
 
-        # 2. Viral Hook
+        # 2. Viral Hook (dosya analizi)
         msg_vh = self.km.extract_viral_hook(c1)
         self.assertIn("kanca", msg_vh)
+
+    def test_premiere_gateway_and_hook(self):
+        # Premiere bağlı değilken nazik yönlendirme mesajı
+        msg_offline = self.km.apply_viral_hook_in_premiere()
+        self.assertIn("Premiere Pro bağlantısı bekleniyor", msg_offline)
+
+        # Mock Premiere Client bağlantısı ve canlı hook testi
+        import socket
+        import threading
+        gw = self.km.gateway
+        gw.start()
+        time.sleep(0.05)
+
+        try:
+            def mock_client_worker():
+                try:
+                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    s.connect(("127.0.0.1", 45732))
+                    # Hello
+                    s.sendall(b'{"type":"status_update","state":{"host":"PPRO","ready":true}}\n')
+                    data = s.recv(4096).decode("utf-8")
+                    if "apply_viral_hook" in data:
+                        req = json.loads(data.strip())
+                        reply = {
+                            "type": "response",
+                            "req_id": req.get("req_id"),
+                            "data": {
+                                "ok": True,
+                                "message": "İlk 3 saniyeye Smooth Punch Zoom, Camera Shake darbesi ve Viral Kanca Grafiği uygulandı."
+                            }
+                        }
+                        s.sendall((json.dumps(reply) + "\n").encode("utf-8"))
+                    s.close()
+                except Exception:
+                    pass
+
+            client_thread = threading.Thread(target=mock_client_worker, daemon=True)
+            client_thread.start()
+            time.sleep(0.15)
+
+            # Canlı timeline hook gönder
+            res_online = self.km.apply_viral_hook_in_premiere(title="BÜYÜK SIR")
+            self.assertIn("Punch Zoom", res_online)
+        finally:
+            gw.stop()
 
 
 if __name__ == "__main__":

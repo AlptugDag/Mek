@@ -31,10 +31,12 @@ class KurguManager:
         from rough_cut import RoughCutEngine
         from multicam_director import MulticamDirector
         from viral_hook import ViralHookSynthesizer
+        from premiere_gateway import PremiereGateway
         self.vision = VisionColorEngine(kurgu_mgr=self)
         self.rough_cut = RoughCutEngine(kurgu_mgr=self)
         self.multicam = MulticamDirector(kurgu_mgr=self)
         self.viral_hook = ViralHookSynthesizer(kurgu_mgr=self)
+        self.gateway = PremiereGateway(kurgu_mgr=self)
 
     # --- Kurgu Yazılım Durumları ---
 
@@ -341,6 +343,24 @@ end tell
         if "error" in res:
             return f"Viral hook hatası: {res['error']}"
         return res["message"]
+
+    # --- Premiere Pro Canlı Timeline Müdahaleleri ---
+
+    def apply_viral_hook_in_premiere(self, title: Optional[str] = None, style: str = "kinetic_punch_zoom") -> str:
+        """Premiere Pro açık timeline'ının ilk 3 saniyesine (00:00:00 - 00:03:00) anında viral hook efektleri uygular."""
+        if not self.gateway.is_connected():
+            return ("Premiere Pro bağlantısı bekleniyor. Lütfen Premiere Pro'da Window > Extensions > "
+                    "Alptuguide Studio panelinin açık olduğundan emin olun.")
+        res = self.gateway.send_command("apply_viral_hook", {"title": title, "style": style})
+        if not res.get("ok"):
+            return f"Premiere Pro hook hatası: {res.get('message', 'Bilinmeyen hata')}"
+        return res.get("message", "Timeline'ın ilk 3 saniyesine viral hook efektleri uygulandı.")
+
+    def analyze_premiere_timeline(self) -> Dict[str, Any]:
+        """Açık Premiere Pro timeline'ını anlık olarak sorgular ve analiz eder."""
+        if not self.gateway.is_connected():
+            return {"error": "Premiere Pro bağlantısı yok. Lütfen Alptuguide Studio panelini açın."}
+        return self.gateway.send_command("analyze_timeline", {})
 
     def auto_edit_with_hook(self, target_path: str, style_prompt: str = "dinamik podcast") -> str:
         """Önce çoklu kamera / kaba kurguyu yapar, ardından en vurucu hook'u başa monte eder."""
