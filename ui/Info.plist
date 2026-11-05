@@ -1,11 +1,43 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>CFBundleIdentifier</key><string>com.alptug.mek.ui</string>
-  <key>CFBundleName</key><string>Mek</string>
-  <key>CFBundleIconFile</key><string>Mek.icns</string>
-  <key>CFBundleShortVersionString</key><string>0.0.0.5</string>
-  <key>CFBundleVersion</key><string>0.0.0.5</string>
-  <key>NSMicrophoneUsageDescription</key><string>Mek yalnızca "Sesle sor" öğesine tıkladığınızda 8 saniyeye kadar dinler.</string>
-  <key>NSSpeechRecognitionUsageDescription</key><string>Sorunuzu cihaz üzerinde metne çevirmek için.</string>
-</dict></plist>
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.alptug.mek</string>
+    <key>CFBundleName</key>
+    <string>Mek</string>
+    <key>CFBundleDisplayName</key>
+    <string>Mek</string>
+    <key>CFBundleExecutable</key>
+    <string>Mek</string>
+    <key>CFBundleIconFile</key>
+    <string>Mek.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0.8</string>
+    <key>CFBundleVersion</key>
+    <string>0.0.0.8</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAppleScriptEnabled</key>
+    <true/>
+    <key>OSAScriptingDefinition</key>
+    <string>Mek.sdef</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.alptug.mek.url</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>mek</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Mek yalnızca 'Sesle sor' öğesine tıkladığınızda 8 saniyeye kadar dinler.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Sorunuzu cihaz üzerinde metne çevirmek için.</string>
+</dict>
+</plist>

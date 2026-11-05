@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Mek Terminology">
+    <suite name="Standard Suite" code="core" description="Common classes and commands.">
+        <command name="quit" code="aevtquit" description="Mek uygulamasını kapatır.">
+            <cocoa class="NSQuitCommand"/>
+        </command>
+    </suite>
+
+    <suite name="Mek Suite" code="MEKS" description="Mek asistanı ve Apple Intelligence sistem denetimi komutları.">
+        <command name="durum" code="MEKSSTAT" description="Mek sistem, donanım ve kurgu durumu raporunu döner.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Sistem durumu raporu."/>
+        </command>
+
+        <command name="brifing" code="MEKSBRIF" description="Günün brifingini döner ve Mac Studio hoparlöründen seslendirir.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Brifing metni."/>
+        </command>
+
+        <command name="temizle" code="MEKSCLEN" description="Önbellek ve RAM rahatlatma temizliği başlatır.">
+            <cocoa class="MekScriptCommand"/>
+            <parameter name="derin" code="pDER" type="boolean" optional="yes" description="Derin temizlik yapılsın mı?">
+                <cocoa key="derin"/>
+            </parameter>
+            <result type="text" description="Temizlik sonucu."/>
+        </command>
+
+        <command name="sor" code="MEKSASKA" description="Mek cihaz içi yapay zekasına doğrudan soru sorar.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Soru metni."/>
+            <result type="text" description="Yapay zeka yanıtı."/>
+        </command>
+
+        <command name="cevap" code="MEKSANSW" description="Mek'in bekleyen sorusuna sesli veya metin yanıt verir.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Seçenek veya yanıt."/>
+            <result type="text" description="Yanıt sonucu."/>
+        </command>
+
+        <command name="kurguModu" code="MEKSPROF" description="Kurgu yazılımları için Tier-0 tam performans modunu etkinleştirir.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Kurgu modu sonucu."/>
+        </command>
+
+        <command name="fanSessiz" code="MEKSFANS" description="Termal fan kontrolünü Akıllı Sessiz kipe alır.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Fan kipi sonucu."/>
+        </command>
+    </suite>
+</dictionary>

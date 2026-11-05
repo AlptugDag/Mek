@@ -14,8 +14,17 @@ cp "$SRC"/jarvisd/*.py "$SRC"/jarvisd/*.sh "$J/jarvisd/"; cp "$SRC/jarvis.py" "$
 cp "$SRC"/bin/* "$BIN/"; chmod +x "$BIN/jarvis" "$BIN/workstation_master_setup.sh" "$BIN/install_siri_shortcut.sh"
 ln -sf jarvis "$BIN/mek"
 (swiftc -O "$SRC/ai/jarvis-ai.swift" -o "$J/ai/jarvis-ai.tmp" && mv -f "$J/ai/jarvis-ai.tmp" "$J/ai/jarvis-ai") || echo "Apple Intelligence köprüsü derlenemedi (hazır cümlelerle çalışır)."
-swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o "$J/mek-menubar.tmp" \
-  -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$SRC/ui/Info.plist" && mv -f "$J/mek-menubar.tmp" "$J/mek-menubar"
+# Native /Applications/Mek.app (AppIntents, AppleScript sdef ve Siri Beta doğrudan entegrasyonu)
+mkdir -p /Applications/Mek.app/Contents/MacOS /Applications/Mek.app/Contents/Resources
+swiftc -O -parse-as-library "$SRC/ui/MekMenuBar.swift" -o /Applications/Mek.app/Contents/MacOS/Mek
+cp "$SRC/ui/Info.plist" /Applications/Mek.app/Contents/Info.plist
+echo -n "APPL????" > /Applications/Mek.app/Contents/PkgInfo
+cp "$SRC/ui/Mek.icns" /Applications/Mek.app/Contents/Resources/Mek.icns
+cp "$SRC/ui/Mek.icns" /Applications/Mek.app/Contents/Resources/AppIcon.icns
+cp "$SRC/ui/Mek.sdef" /Applications/Mek.app/Contents/Resources/Mek.sdef
+codesign --force --deep --sign - /Applications/Mek.app
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Mek.app
+ln -sf /Applications/Mek.app/Contents/MacOS/Mek "$J/mek-menubar"
 [ -x "$J/venv/bin/python" ] || "$(command -v python3.11 || command -v python3)" -m venv "$J/venv"
 "$J/venv/bin/pip" install -q -r "$SRC/requirements.txt"
 for l in jarvis.periodic jarvis.startup keepawake-videoapps smart-cleaner mek; do

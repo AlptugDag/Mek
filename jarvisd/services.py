@@ -383,7 +383,7 @@ class ServiceManager:
         for pid, name, cmd, cpu, _ in _iter_procs(snap):
             try:
                 target = cmd or name or ""
-                if ("WallpaperMacintoshExtension" in name or name == "siriactionsd") and cpu > 80.0:
+                if "WallpaperMacintoshExtension" in name and cpu > 80.0:
                     os.kill(pid, signal.SIGKILL)
                     continue
                 if re.search(r"GrowthSDKHelper|Adobe Crash Processor|CRLogTransport|LogTransport2", target) and cpu > 25.0:

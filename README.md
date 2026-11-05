@@ -10,11 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.7-green" alt="v0.0.0.7">
+  <img src="https://img.shields.io/badge/version-0.0.0.8-green" alt="v0.0.0.8">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.7:** İndirilenler (`~/Downloads`) ve Masaüstü (`~/Desktop`) Ön-Kapı Denetimi (`scan_recent_downloads` — yeni inen `.command`, `.sh`, `.tool`, `.dmg` ve `.pkg` dosyalarını çalıştırılmadan önce stealer/madenci imzalarına karşı tarar), Gerçek Zamanlı Stealer Kalkanı, Kabuk/Crontab Arka Kapı Denetimi (`~/.zshrc`, `~/.zprofile`, `crontab`), Özel/Ad-Hoc Kurgu Eklentisi Koruma Kalkanı ve Özel Sürüm Korumalı Güncelleyici devrede. Önceki sürümler: [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6), [`v0.0.0.5`](https://github.com/AlptugDag/Mek/tree/v0.0.0.5), [`v0.0.0.4`](https://github.com/AlptugDag/Mek/tree/v0.0.0.4).
+> **v0.0.0.8:** Kestirmesiz (Shortcuts gerektirmeyen) doğrudan Siri Beta / Apple Intelligence (Siri AI, Campo) sistem düzeyinde entegrasyonu, `/Applications/Mek.app` yerel uygulama paketi, AppleScript `Mek.sdef` sözlüğü, `mek://` evrensel protokolü ve Siri mikrofon çakışma koruması devrede. Önceki sürümler: [`v0.0.0.7`](https://github.com/AlptugDag/Mek/tree/v0.0.0.7), [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6), [`v0.0.0.5`](https://github.com/AlptugDag/Mek/tree/v0.0.0.5).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -63,12 +63,14 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.
 - **Otonom Onarım ve Yetim Temizliği:** Çökme raporları sessizce `crash_reports.json` içine işlenir. Ana Adobe/kurgu uygulamaları kapandığında veya çöktüğünde bellekte asılı kalan yetim `CEPHtmlEngine`, `dynamiclinkmanager`, `AdobeQTServer`, `AI MACHINE Server` ve `Adobe Crash Processor` süreçleri ile geçici `.lock` dosyaları otomatik temizlenir. Kullanıcı dilediğinde `mek çökmeler` yazarak özeti metin olarak görebilir.
 
-## Soru-Cevap Mekanizması ve Siri Entegrasyonu
+## Soru-Cevap Mekanizması ve Gerçek Siri Beta / Apple Intelligence Entegrasyonu
 - **Net Seçenekler:** Mek bir konuda karar gerektiğinde açık seçeneklerle sorar (örn. `kapat` / `dokunma`). Seçenekler seslendirilir ve anlaşılır yanıt beklenir.
-- **Çok Kanallı Yanıt:**
+- **Kestirmesiz (Shortcuts'sız) Doğrudan Sistem Entegrasyonu:**
+  - **Siri Beta & Apple Intelligence (Campo / Siri AI):** Kestirmeler (Shortcuts) uygulamasına veya ara adımlara gerek kalmadan, `/Applications/Mek.app` doğrudan sisteme AppleScript Scripting Suite (`Mek.sdef`), AppIntents ve `mek://` evrensel protokolü ile bağlıdır.
+  - Siri'ye doğrudan konuşarak: *"Mek durumunu sor"*, *"Mek brifing ver"*, *"Mek temizlik yap"*, *"Mek kurgu modunu aç"*, *"Mek'e sor [sorunuz]"*.
   - Terminalden: `mek cevap kapat`, `mek evet`, `mek hayır`
   - Menü çubuğundan: Soru olduğunda menü `Mek ❓` simgesini alır ve tek tıkla yanıtlanabilir butonlar sunar.
-  - Siri üzerinden: `bin/install_siri_shortcut.sh` çalıştırılarak Kestirmeler uygulamasına "Mek" eklenir. Artık "Hey Siri, Mek" denildiğinde soru doğrudan sesle yanıtlanabilir veya durum özeti alınabilir.
+  - **Sıfır Mikrofon Çakışması:** Yeni Siri Beta (`Siri AI.app` / `CampoRemoteService`) ve Apple Intelligence mikrofonu kullandığında Mek asla kendini sessize almaz, süreçler birbirini engellemeden pürüzsüz çalışır.
 
 ## Performans
 - **Kurgu sırasında:** Premiere, After Effects, Resolve, Topaz veya Media Encoder açıldığında devreye girer.
@@ -167,9 +169,9 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 
 Uygulama kaldırma; cache, tercihler, destek dosyaları, sandbox container'ları ve uygulamaya ait kullanıcı başlangıç ajanları gibi bundle ID ile doğrudan eşleşen öğeleri kapsar. Paylaşılan Group Container'lar, kullanıcı belgeleri ve yönetici yetkisi gerektiren sistem öğeleri bilerek kapsam dışındadır.
 
-**Siri ile kullanım:** Kestirmeler'de "Kabuk Betiği Çalıştır" adımına `mek brifing` yazın, Siri'ye "Mek brifing" deyin.
+**Siri ile doğrudan kullanım:** Siri'ye "Mek durumunu sor", "Mek brifing", "Mek temizlik yap" veya "Mek'e sor [sorunuz]" demeniz yeterlidir. Hiçbir Kestirme (Shortcut) kurulumu gerekmez; Mek doğrudan sistem düzeyinde AppleScript ve AppIntents köprüsüyle çalışır.
 
-Mek mikrofondan dinlemez. Ona verilecek komutlar, ayarlar ve izleme tercihleri terminalde `mek ...` komutlarıyla veya Siri Kestirmeleri üzerinden iletilir. Sistem eylemleri bu komutlar ve güvenli, tanımlı bakım kurallarıyla sınırlıdır; keyfî terminal komutları üretip çalıştırmaz.
+Mek mikrofondan sürekli dinlemez. Ona verilecek komutlar, ayarlar ve izleme tercihleri terminalde `mek ...` komutlarıyla, Siri üzerinden veya menü çubuğundan iletilir. Sistem eylemleri bu komutlar ve güvenli, tanımlı bakım kurallarıyla sınırlıdır; keyfî terminal komutları üretip çalıştırmaz.
 
 Mek, kurulumdan sonra macOS menü çubuğunda görünür. Menüden brifing, sistem/güç durumu ve izleme listesi açılabilir; **Mek'e komut ver…** alanından desteklenen bir komut veya izleme tercihi gönderilebilir. Bu pencere arka plan servisine yerel Unix soketi üzerinden bağlanır; komutlar bu cihazda kalır.
 

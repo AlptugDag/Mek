@@ -137,8 +137,11 @@ def _ca_get(obj, sel, ctype):
     return list(buf)
 
 
-# Sürekli mikrofon tutan sistem süreçleri (Siri vb.) sayılmaz. Mek mikrofonu hiç açmaz.
-_MIC_IGNORE = re.compile(r"corespeechd|coreaudiod|siri|assistantd|heard|ControlCenter|universalaccessd")
+# Sürekli mikrofon tutan sistem süreçleri (Siri, Siri AI, Campo vb.) sayılmaz. Mek mikrofonu hiç açmaz.
+_MIC_IGNORE = re.compile(
+    r"corespeechd|coreaudiod|siri|assistantd|heard|controlcenter|universalaccessd|campo|intelligence|sirittsd|siriappintentsd|assistant_service",
+    re.IGNORECASE,
+)
 
 
 def other_mic_users():

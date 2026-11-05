@@ -88,9 +88,9 @@ TRUSTED = os.path.join(STATE_DIR, "trusted_items.json")  # karantinadan geri al�
 
 
 def is_own_item(label, prog):
-    """Mek'in kendi ajanları (daemon, menü çubuğu) kendi kendini karantinaya almasın."""
+    """Mek'in kendi ajanları (daemon, menü çubuğu, /Applications/Mek.app) kendi kendini karantinaya almasın."""
     return bool(prog) and label.startswith(("com.alptug.jarvis", "com.alptug.mek")) and \
-        os.path.realpath(prog).startswith((MEK_HOME + os.sep, os.path.join(HOME, ".local/bin") + os.sep))
+        os.path.realpath(prog).startswith((MEK_HOME + os.sep, os.path.join(HOME, ".local/bin") + os.sep, "/Applications/Mek.app" + os.sep))
 
 
 def _load(path, default):

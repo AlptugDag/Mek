@@ -1,8 +1,246 @@
 import AVFoundation
 import AppKit
+import AppIntents
 import Darwin
 import Foundation
 import Speech
+
+// MARK: - Native Darwin Socket Bridge
+
+public enum MekSocketBridge {
+    public static func execute(_ command: String) -> String {
+        let socketPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".jarvis/jarvis.sock").path
+        let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return "Mek: Soket açılamadı." }
+        defer { Darwin.close(fd) }
+
+        var tv = timeval(tv_sec: 15, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = socketPath.utf8CString
+        let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
+        guard pathBytes.count <= maxLen else { return "Mek: Soket yolu geçersiz." }
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: maxLen) { dst in
+                for i in 0..<pathBytes.count { dst[i] = pathBytes[i] }
+            }
+        }
+        let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let connected = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
+                Darwin.connect(fd, sa, addrLen)
+            }
+        }
+        guard connected == 0 else {
+            return "Mek arka plan servisine bağlanılamadı. Servis aktif mi?"
+        }
+
+        let payload = Array((command.trimmingCharacters(in: .whitespacesAndNewlines) + "\n").utf8)
+        let written = payload.withUnsafeBytes { buf in
+            Darwin.write(fd, buf.baseAddress, buf.count)
+        }
+        guard written == payload.count else {
+            return "Mek: Komut servise yazılamadı."
+        }
+
+        var responseData = Data()
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            if count <= 0 { break }
+            responseData.append(buffer, count: count)
+        }
+        let response = String(data: responseData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (response?.isEmpty == false) ? response! : "İşlem tamamlandı."
+    }
+}
+
+// MARK: - AppleScript Scripting Command (Siri & System Automation)
+
+@objc(MekScriptCommand)
+public final class MekScriptCommand: NSScriptCommand {
+    public override func performDefaultImplementation() -> Any? {
+        let name = commandDescription.commandName
+        let direct = directParameter as? String ?? ""
+        let cmd = name.lowercased()
+
+        if cmd == "durum" {
+            return MekSocketBridge.execute("durum")
+        } else if cmd == "brifing" {
+            let res = MekSocketBridge.execute("brifing")
+            _ = MekSocketBridge.execute("söyle " + res)
+            return res
+        } else if cmd == "temizle" {
+            let derin = evaluatedArguments?["derin"] as? Bool ?? false
+            return MekSocketBridge.execute(derin ? "temizle derin" : "temizle")
+        } else if cmd == "sor" {
+            let query = direct.isEmpty ? (evaluatedArguments?["soru"] as? String ?? "") : direct
+            return MekSocketBridge.execute("sor " + query)
+        } else if cmd == "cevap" {
+            return MekSocketBridge.execute("cevap " + direct)
+        } else if cmd == "kurgumodu" {
+            return MekSocketBridge.execute("odak zorla")
+        } else if cmd == "fansessiz" {
+            return MekSocketBridge.execute("fan sessiz")
+        }
+        return MekSocketBridge.execute(direct.isEmpty ? cmd : "\(cmd) \(direct)")
+    }
+}
+
+// MARK: - App Intents & Apple Intelligence Integration (Siri Beta)
+
+@available(macOS 13.0, *)
+public struct MekStatusIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Durumu"
+    public static var description = IntentDescription("Mek sistem, donanım, fan ve kurgu durumunu bildirir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("durum")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekBriefingIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Brifing"
+    public static var description = IntentDescription("Günün brifingini seslendirir ve metin olarak iletir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("brifing")
+        _ = MekSocketBridge.execute("söyle " + result)
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekCleanIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Temizlik"
+    public static var description = IntentDescription("Önbellek ve RAM rahatlatma temizliğini başlatır.")
+    public static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Derin Temizlik", default: false)
+    public var derin: Bool
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let cmd = derin ? "temizle derin" : "temizle"
+        let result = MekSocketBridge.execute(cmd)
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekAskIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek'e Sor"
+    public static var description = IntentDescription("Mek cihaz içi Apple Intelligence asistanına soru sorar.")
+    public static var openAppWhenRun: Bool = false
+
+    @Parameter(title: "Soru")
+    public var soru: String
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("sor " + soru)
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekCreativeModeIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Kurgu Modu"
+    public static var description = IntentDescription("Kurgu uygulamaları için en yüksek performansı açar.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("odak zorla")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekSilentFanIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Sessiz Fan"
+    public static var description = IntentDescription("Mac Studio fanlarını Akıllı Sessiz kipe alır.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("fan sessiz")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekShortcuts: AppShortcutsProvider {
+    public static var appShortcuts: [AppShortcut] {
+        AppShortcut(
+            intent: MekStatusIntent(),
+            phrases: [
+                "\(.applicationName) durumu",
+                "\(.applicationName) durum",
+                "\(.applicationName) rapor ver",
+                "\(.applicationName) nasıl"
+            ],
+            shortTitle: "Mek Durumu",
+            systemImageName: "gauge.with.dots.needle.bottom.50percent"
+        )
+        AppShortcut(
+            intent: MekBriefingIntent(),
+            phrases: [
+                "\(.applicationName) brifing",
+                "\(.applicationName) günün brifingi",
+                "\(.applicationName) sabah brifingi"
+            ],
+            shortTitle: "Mek Brifing",
+            systemImageName: "sun.max"
+        )
+        AppShortcut(
+            intent: MekCleanIntent(),
+            phrases: [
+                "\(.applicationName) temizlik yap",
+                "\(.applicationName) temizle",
+                "\(.applicationName) önbelleği temizle"
+            ],
+            shortTitle: "Mek Temizle",
+            systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: MekCreativeModeIntent(),
+            phrases: [
+                "\(.applicationName) kurgu modu",
+                "\(.applicationName) performans modu"
+            ],
+            shortTitle: "Kurgu Modu",
+            systemImageName: "film"
+        )
+        AppShortcut(
+            intent: MekSilentFanIntent(),
+            phrases: [
+                "\(.applicationName) fanı sessize al",
+                "\(.applicationName) sessiz fan"
+            ],
+            shortTitle: "Sessiz Fan",
+            systemImageName: "fanblades"
+        )
+    }
+}
+
+// MARK: - Menu Bar & Application Delegate
 
 @MainActor
 final class MekMenuBar: NSObject, NSApplicationDelegate {
@@ -11,6 +249,26 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     private let engine = AVAudioEngine()
     private var listening = false
     private var appIcon: NSImage?
+    private var lastPromptedQuestionId: String? = nil
+    private var questionPollTimer: Timer? = nil
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Raw Apple Event Suite Handler (MEKS: STAT, BRIF, CLEN, ASKA, ANSW, PROF, FANS)
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleMekAppleEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(0x4D454B53), // 'MEKS'
+            andEventID: AEEventID(0x2A2A2A2A)      // '****' (typeWildCard)
+        )
+
+        // URL Scheme Handler (mek://durum, mek://brifing, mek://temizle, mek://sor?q=...)
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -41,22 +299,74 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         startQuestionPolling()
     }
 
+    @objc private func handleMekAppleEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        let eventID = event.eventID
+        var cmd = "durum"
+        if eventID == 0x53544154 { // STAT: durum
+            cmd = "durum"
+        } else if eventID == 0x42524946 { // BRIF: brifing
+            let res = MekSocketBridge.execute("brifing")
+            _ = MekSocketBridge.execute("söyle " + res)
+            if replyEvent.descriptorType != typeNull {
+                replyEvent.setParam(NSAppleEventDescriptor(string: res), forKeyword: keyDirectObject)
+            }
+            return
+        } else if eventID == 0x434C454E { // CLEN: temizle
+            let derin = event.paramDescriptor(forKeyword: 0x70444552)?.booleanValue ?? false // pDER
+            cmd = derin ? "temizle derin" : "temizle"
+        } else if eventID == 0x41534B41 { // ASKA: sor
+            let q = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = "sor " + q
+        } else if eventID == 0x414E5357 { // ANSW: cevap
+            let a = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = "cevap " + a
+        } else if eventID == 0x50524F46 { // PROF: kurguModu
+            cmd = "odak zorla"
+        } else if eventID == 0x46414E53 { // FANS: fanSessiz
+            cmd = "fan sessiz"
+        }
+
+        let result = MekSocketBridge.execute(cmd)
+        if replyEvent.descriptorType != typeNull {
+            replyEvent.setParam(NSAppleEventDescriptor(string: result), forKeyword: keyDirectObject)
+        }
+    }
+
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: urlString) else { return }
+
+        let action = url.host ?? url.path.replacingOccurrences(of: "/", with: "")
+        var command = action.isEmpty ? "durum" : action
+
+        if let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let queryItems = components.queryItems {
+            for item in queryItems {
+                if item.name == "q" || item.name == "soru", let val = item.value {
+                    command = "sor " + val
+                } else if item.name == "cevap" || item.name == "secenek", let val = item.value {
+                    command = "cevap " + val
+                }
+            }
+        }
+
+        let result = MekSocketBridge.execute(command)
+        if replyEvent.descriptorType != typeNull {
+            replyEvent.setParam(NSAppleEventDescriptor(string: result), forKeyword: keyDirectObject)
+        }
+    }
+
     private func loadBrandIcon() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let candidates = [
-            home.appendingPathComponent(".jarvis/mek.png").path,
-            home.appendingPathComponent(".jarvis/Mek.icns").path
+            "/Applications/Mek.app/Contents/Resources/Mek.icns",
+            home.appendingPathComponent(".jarvis/Mek.icns").path,
+            home.appendingPathComponent(".jarvis/mek.png").path
         ]
         for path in candidates {
             if let img = NSImage(contentsOfFile: path) {
                 appIcon = img
                 NSApp.applicationIconImage = img
-                DispatchQueue.global(qos: .utility).async {
-                    for target in [".jarvis", ".jarvis/mek-menubar", ".local/bin/jarvis"] {
-                        let p = home.appendingPathComponent(target).path
-                        NSWorkspace.shared.setIcon(img, forFile: p)
-                    }
-                }
                 break
             }
         }
@@ -69,8 +379,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     }
 
     /// Ön plandaki uygulama değiştiğinde (<15 ms) doğrudan Unix soketi üzerinden Mek servisine haber verir.
-    /// Böylece Premiere Pro, Photoshop ve Topaz arasında geçiş yapıldığı anda P-çekirdek / E-çekirdek
-    /// öncelikleri hiçbir alt süreç (nc vb.) açılmadan sıfır gecikmeyle güncellenir.
     private func startWorkspaceObserver() {
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
@@ -83,41 +391,10 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     }
 
     private nonisolated func sendSilent(_ command: String) {
-        let socketPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".jarvis/jarvis.sock").path
         DispatchQueue.global(qos: .userInteractive).async {
-            let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
-            guard fd >= 0 else { return }
-            defer { Darwin.close(fd) }
-
-            var addr = sockaddr_un()
-            addr.sun_family = sa_family_t(AF_UNIX)
-            let pathBytes = socketPath.utf8CString
-            let maxLen = MemoryLayout.size(ofValue: addr.sun_path)
-            guard pathBytes.count <= maxLen else { return }
-            withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-                ptr.withMemoryRebound(to: CChar.self, capacity: maxLen) { dst in
-                    for i in 0..<pathBytes.count {
-                        dst[i] = pathBytes[i]
-                    }
-                }
-            }
-            let addrLen = socklen_t(MemoryLayout<sockaddr_un>.size)
-            let connected = withUnsafePointer(to: &addr) { ptr in
-                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sa in
-                    Darwin.connect(fd, sa, addrLen)
-                }
-            }
-            guard connected == 0 else { return }
-            let payload = Array((command + "\n").utf8)
-            _ = payload.withUnsafeBytes { buf in
-                Darwin.write(fd, buf.baseAddress, buf.count)
-            }
+            _ = MekSocketBridge.execute(command)
         }
     }
-
-    private var lastPromptedQuestionId: String? = nil
-    private var questionPollTimer: Timer? = nil
 
     private func startQuestionPolling() {
         questionPollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
@@ -173,45 +450,16 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         menu.addItem(item)
     }
 
-    @objc private func runBriefing() {
-        send("brifing")
-    }
-
-    @objc private func runStatus() {
-        send("durum")
-    }
-
-    @objc private func runMemory() {
-        send("bellek")
-    }
-
-    @objc private func runRamDisk() {
-        send("ramdisk")
-    }
-
-    @objc private func runTimeMachine() {
-        send("zamanmakinesi")
-    }
-
-    @objc private func runFanSilent() {
-        send("fan sessiz")
-    }
-
-    @objc private func runWatchlist() {
-        send("izleme")
-    }
-
-    @objc private func runPower() {
-        send("güç")
-    }
-
-    @objc private func runSecurity() {
-        send("güvenlik")
-    }
-
-    @objc private func runHelp() {
-        send("yardım")
-    }
+    @objc private func runBriefing() { send("brifing") }
+    @objc private func runStatus() { send("durum") }
+    @objc private func runMemory() { send("bellek") }
+    @objc private func runRamDisk() { send("ramdisk") }
+    @objc private func runTimeMachine() { send("zamanmakinesi") }
+    @objc private func runFanSilent() { send("fan sessiz") }
+    @objc private func runWatchlist() { send("izleme") }
+    @objc private func runPower() { send("güç") }
+    @objc private func runSecurity() { send("güvenlik") }
+    @objc private func runHelp() { send("yardım") }
 
     @objc private func promptForCommand() {
         let alert = makeAlert()
@@ -230,7 +478,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         send(command)
     }
 
-    /// Mikrofon yalnızca bu menü öğesine tıklayınca açılır; en fazla 8 saniye sonra kapanır.
     @objc private func askByVoice() {
         guard !listening else { return }
         SFSpeechRecognizer.requestAuthorization { [weak self] status in
@@ -292,32 +539,9 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             return
         }
         commandInProgress = true
-        let socketPath = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".jarvis/jarvis.sock").path
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result: String
-            do {
-                let process = Process()
-                let input = Pipe()
-                let output = Pipe()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/nc")
-                process.arguments = ["-U", "-w", "180", socketPath]
-                process.standardInput = input
-                process.standardOutput = output
-                process.standardError = FileHandle.nullDevice
-                try process.run()
-                try input.fileHandleForWriting.write(contentsOf: Data((command + "\n").utf8))
-                try input.fileHandleForWriting.close()
-                let data = output.fileHandleForReading.readDataToEndOfFile()
-                process.waitUntilExit()
-                let response = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-                result = process.terminationStatus == 0
-                    ? (response.flatMap { $0.isEmpty ? nil : $0 } ?? "Komut tamamlandı.")
-                    : "Mek komut soketine bağlanamadı. Servisin çalıştığını kontrol edin."
-            } catch {
-                result = "Komut gönderilemedi: \(error.localizedDescription)"
-            }
+            let result = MekSocketBridge.execute(command)
 
             DispatchQueue.main.async {
                 self?.commandInProgress = false
@@ -333,7 +557,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Onay gerektiren eylemler yalnızca burada, sizin tıklamanızla çalışır.
     private func askConfirmation(_ text: String) {
         let alert = makeAlert()
         alert.messageText = "Mek onayınızı istiyor"
@@ -352,9 +575,11 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - Entry Point
+
 @main
 @MainActor
-struct MekMenuBarApp {
+struct MekAppMain {
     static func main() {
         let app = NSApplication.shared
         let delegate = MekMenuBar()
