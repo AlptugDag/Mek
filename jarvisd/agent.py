@@ -115,6 +115,29 @@ class Agent:
         def update_now(args):
             return m.command("güncelle şimdi")
 
+        def kurgu_durum(args):
+            return m.kurgu.status() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def kurgu_optimize(args):
+            return m.kurgu.optimize_environment() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def davinci_render(args):
+            return m.kurgu.start_davinci_render() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def premiere_export(args):
+            return m.kurgu.export_premiere_to_media_encoder() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def kurgu_sessizlik(args):
+            yol = str(args.get("yol", "")).strip()
+            if not yol:
+                return "Lütfen analiz edilecek ses dosyası yolunu belirtin."
+            res = m.kurgu.analyze_audio_silence(yol)
+            if "error" in res:
+                return f"Hata: {res['error']}"
+            return (f"Ses analizi ({res['file']}): Toplam {res['total_duration_sec']}s, "
+                    f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
+                    f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
+
         T = {
             "durum": ("Anlık CPU/GPU/bellek/disk/profil özeti", "oku", self._cmd("durum")),
             "guc": ("Güç ve UPS durumu", "oku", self._cmd("güç")),
@@ -125,7 +148,12 @@ class Agent:
             "gunluk": ("Mek'in son kendiliğinden eylemleri", "oku", self._cmd("günlük 15")),
             "guncelleme_durumu": ("Yazılım güncelleme durumu", "oku", self._cmd("güncelle durum")),
             "top_processes": ("En çok bellek/CPU kullanan süreçler", "oku", top_processes),
+            "kurgu_durumu": ("Açık Premiere Pro veya DaVinci Resolve kurgu projelerinin durumu", "oku", kurgu_durum),
+            "kurgu_sessizlik": ("Ses kaydındaki sessizlikleri tespit edip kaba kurgu kesim noktaları çıkar. args: yol", "oku", kurgu_sessizlik),
             "temizle": ("Günlük temizlik başlat (kurgu açıkken reddeder)", "guvenli", self._cmd("temizle")),
+            "kurgu_optimize": ("Kurgu ortamını optimize et (P-core önceliği, Ultra-Scratch RAM-disk, sessiz fan, purge)", "guvenli", kurgu_optimize),
+            "davinci_render": ("DaVinci Resolve Deliver sayfasındaki render işlerini başlat", "guvenli", davinci_render),
+            "premiere_export": ("Premiere Pro sekansını Adobe Media Encoder kuyruğuna gönder", "guvenli", premiere_export),
             "sustur": ("Mek'i sustur. args: dakika", "guvenli", mute),
             "arka_plana_al": ("CPU'yu yoran süreci verimlilik çekirdeğine al. args: pid", "guvenli", deprioritize),
             "uygulama_kapat": ("Uygulamayı kapat. args: ad", "onay", quit_app),

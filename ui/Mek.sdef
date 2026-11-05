@@ -47,5 +47,31 @@
             <cocoa class="MekScriptCommand"/>
             <result type="text" description="Fan kipi sonucu."/>
         </command>
+
+        <command name="kurgu" code="MEKSKRG1" description="Premiere Pro ve DaVinci Resolve aktif proje/sekans durumunu bildirir.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Kurgu durumu raporu."/>
+        </command>
+
+        <command name="kurguOptimize" code="MEKSKRGO" description="Kurgu ortamını optimize eder (P-core önceliği, Ultra-Scratch, sessiz fan, purge).">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Kurgu optimizasyonu sonucu."/>
+        </command>
+
+        <command name="davinciRender" code="MEKSDVRN" description="DaVinci Resolve Deliver sayfasındaki render kuyruğunu başlatır.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="DaVinci render sonucu."/>
+        </command>
+
+        <command name="premiereExport" code="MEKSPMEX" description="Premiere Pro aktif sekansını Adobe Media Encoder kuyruğuna gönderir.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Dışa aktarma sonucu."/>
+        </command>
+
+        <command name="kurguSessizlik" code="MEKSKRGS" description="Ses kaydındaki sessizlikleri tespit edip kesim noktaları çıkarır.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Ses dosyasının tam dosya yolu."/>
+            <result type="text" description="Sessizlik analizi ve kesim özeti."/>
+        </command>
     </suite>
 </dictionary>

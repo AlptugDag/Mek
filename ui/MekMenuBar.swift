@@ -86,6 +86,16 @@ public final class MekScriptCommand: NSScriptCommand {
             return MekSocketBridge.execute("odak zorla")
         } else if cmd == "fansessiz" {
             return MekSocketBridge.execute("fan sessiz")
+        } else if cmd == "kurgu" {
+            return MekSocketBridge.execute("kurgu durum")
+        } else if cmd == "kurguoptimize" {
+            return MekSocketBridge.execute("kurgu optimize")
+        } else if cmd == "davincirender" {
+            return MekSocketBridge.execute("kurgu render")
+        } else if cmd == "premiereexport" {
+            return MekSocketBridge.execute("kurgu export")
+        } else if cmd == "kurgusessizlik" {
+            return MekSocketBridge.execute("kurgu sessizlik " + direct)
         }
         return MekSocketBridge.execute(direct.isEmpty ? cmd : "\(cmd) \(direct)")
     }
@@ -186,6 +196,62 @@ public struct MekSilentFanIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
+public struct MekKurguStatusIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Kurgu Durumu"
+    public static var description = IntentDescription("Premiere Pro ve DaVinci Resolve aktif kurgu durumunu bildirir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu durum")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekKurguOptimizeIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Kurgu Optimizasyonu"
+    public static var description = IntentDescription("Kurgu ortamını en yüksek performans için optimize eder.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu optimize")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekDaVinciRenderIntent: AppIntent {
+    public static var title: LocalizedStringResource = "DaVinci Render Başlat"
+    public static var description = IntentDescription("DaVinci Resolve Deliver sayfasındaki render kuyruğunu başlatır.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu render")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekPremiereExportIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Premiere Dışa Aktar"
+    public static var description = IntentDescription("Premiere Pro sekansını Adobe Media Encoder kuyruğuna gönderir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu export")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
 public struct MekShortcuts: AppShortcutsProvider {
     public static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -236,6 +302,45 @@ public struct MekShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Sessiz Fan",
             systemImageName: "fanblades"
+        )
+        AppShortcut(
+            intent: MekKurguStatusIntent(),
+            phrases: [
+                "\(.applicationName) kurgu durumu",
+                "\(.applicationName) montaj durumu",
+                "\(.applicationName) kurgu nasıl"
+            ],
+            shortTitle: "Kurgu Durumu",
+            systemImageName: "film.stack"
+        )
+        AppShortcut(
+            intent: MekKurguOptimizeIntent(),
+            phrases: [
+                "\(.applicationName) kurguyu hızlandır",
+                "\(.applicationName) kurgu optimize et",
+                "\(.applicationName) kurgu hazırla"
+            ],
+            shortTitle: "Kurgu Optimize Et",
+            systemImageName: "bolt.badge.clock"
+        )
+        AppShortcut(
+            intent: MekDaVinciRenderIntent(),
+            phrases: [
+                "\(.applicationName) davinci render başlat",
+                "\(.applicationName) render al",
+                "\(.applicationName) render başlat"
+            ],
+            shortTitle: "DaVinci Render",
+            systemImageName: "play.circle"
+        )
+        AppShortcut(
+            intent: MekPremiereExportIntent(),
+            phrases: [
+                "\(.applicationName) premiere export et",
+                "\(.applicationName) premiere dışa aktar"
+            ],
+            shortTitle: "Premiere Export",
+            systemImageName: "arrow.up.forward.app"
         )
     }
 }
@@ -288,6 +393,15 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         add("Güç durumu", to: menu, action: #selector(runPower))
         add("Güvenlik özeti", to: menu, action: #selector(runSecurity))
         menu.addItem(.separator())
+        let kurguItem = NSMenuItem(title: "🎬 Video Kurgu (Apple Intelligence)", action: nil, keyEquivalent: "")
+        let kurguSubMenu = NSMenu()
+        add("Kurgu Durumu (Premiere / DaVinci)", to: kurguSubMenu, action: #selector(runKurguStatus))
+        add("Kurgu Ortamını Optimize Et (P-Core + RAM-disk)", to: kurguSubMenu, action: #selector(runKurguOptimize))
+        add("DaVinci Render Kuyruğunu Başlat", to: kurguSubMenu, action: #selector(runDaVinciRender))
+        add("Premiere Sekansını Media Encoder'a Aktar", to: kurguSubMenu, action: #selector(runPremiereExport))
+        kurguItem.submenu = kurguSubMenu
+        menu.addItem(kurguItem)
+        menu.addItem(.separator())
         add("Mek'e sor veya komut ver…", to: menu, action: #selector(promptForCommand))
         add("Sesle sor (8 sn dinler)", to: menu, action: #selector(askByVoice))
         add("Komut yardımı", to: menu, action: #selector(runHelp))
@@ -324,6 +438,17 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             cmd = "odak zorla"
         } else if eventID == 0x46414E53 { // FANS: fanSessiz
             cmd = "fan sessiz"
+        } else if eventID == 0x4B524731 { // KRG1: kurgu
+            cmd = "kurgu durum"
+        } else if eventID == 0x4B52474F { // KRGO: kurguOptimize
+            cmd = "kurgu optimize"
+        } else if eventID == 0x4456524E { // DVRN: davinciRender
+            cmd = "kurgu render"
+        } else if eventID == 0x504D4558 { // PMEX: premiereExport
+            cmd = "kurgu export"
+        } else if eventID == 0x4B524753 { // KRGS: kurguSessizlik
+            let file = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = "kurgu sessizlik " + file
         }
 
         let result = MekSocketBridge.execute(cmd)
@@ -460,6 +585,10 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     @objc private func runPower() { send("güç") }
     @objc private func runSecurity() { send("güvenlik") }
     @objc private func runHelp() { send("yardım") }
+    @objc private func runKurguStatus() { send("kurgu durum") }
+    @objc private func runKurguOptimize() { send("kurgu optimize") }
+    @objc private func runDaVinciRender() { send("kurgu render") }
+    @objc private func runPremiereExport() { send("kurgu export") }
 
     @objc private func promptForCommand() {
         let alert = makeAlert()

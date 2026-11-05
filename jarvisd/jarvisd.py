@@ -43,6 +43,8 @@ import services
 from services import ServiceManager
 from memory_budget import MemoryBudget
 from questions import QuestionBox, Question, Option, ai_classifier
+from kurgu import KurguManager
+from neural_conductor import NeuralConductor
 
 log = logging.getLogger("mek")
 PY = os.path.join(config.MEK_HOME, "venv/bin/python")
@@ -82,6 +84,8 @@ class Mek:
         self.network_state = "unknown"
         self.last_activity_snapshot = None
         self.services = ServiceManager(self.cfg, events=self.events)
+        self.kurgu = KurguManager(services=self.services, events=self.events)
+        self.neural_conductor = NeuralConductor(services=self.services, kurgu_mgr=self.kurgu)
         self.security = Security(self.notify, events=self.events)
         self.memory_budget = MemoryBudget(self.cfg)
         self.questions = QuestionBox(
@@ -949,8 +953,54 @@ class Mek:
             query = " ".join(parts[1:]) if len(parts) > 1 else None
             return tm.report(query=query)
 
+        if c in ("kurgu", "kurgu durum", "kurgu status"):
+            return self.kurgu.status() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
+
+        if c in ("kurgu optimize", "kurgu hızlandır", "kurgu hizlandir"):
+            return self.kurgu.optimize_environment() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
+
+        if c in ("kurgu render", "davinci render"):
+            return self.kurgu.start_davinci_render() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
+
+        if c in ("kurgu export", "premiere export"):
+            return self.kurgu.export_premiere_to_media_encoder() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
+
+        if c.startswith("kurgu sessizlik"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu sessizlik /yol/dosya.wav"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            res = self.kurgu.analyze_audio_silence(parts[2].strip())
+            if "error" in res:
+                return f"Hata: {res['error']}"
+            return (f"Sessizlik Analizi ({res['file']}): Toplam {res['total_duration_sec']}s, "
+                    f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
+                    f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
+
+        if c.startswith(("zeka ", "orkestra ", "ai ")):
+            if not hasattr(self, "neural_conductor") or not self.neural_conductor:
+                return "Neural Conductor etkin değil."
+            prompt = cmd.split(None, 1)[1]
+            snap = getattr(self, "snap", None)
+            telemetry = {
+                "front_app": snap.front if snap else "Bilinmiyor",
+                "cpu": snap.cpu if snap else 0,
+                "gpu": snap.gpu if snap else 0,
+                "ram": snap.mem_pct if snap else 0,
+                "swap": f"{snap.swap_gb:.1f} GB" if snap else "0 GB",
+                "thermal": "Normal"
+            }
+            res = self.neural_conductor.orchestrate(prompt, telemetry)
+            msg = res["explanation"]
+            if res["actions"]:
+                msg += f" (Uygulanan eylemler: {'; '.join(res['actions'])})"
+            self.speak(res["explanation"])
+            return msg
+
         if c in ("yardım", "yardim", "help"):
             return ("Komutlar: brifing, durum, bellek, ramdisk, fan [durum|sessiz|otomatik|performans], "
+                    "kurgu [durum|optimize|render|export|sessizlik], zeka <istek>, "
                     "zamanmakinesi [geri <proje> [no]], izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
                     "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], soru, cevap <seçenek>, "
                     "güncelle [kontrol|durum|şimdi], karantina [geri <no>], günlük [adet], sor <serbest soru> (ya da doğrudan yazın), onay, iptal, reklam [durum|aç|güncelle|kapat], sus <dakika>. "

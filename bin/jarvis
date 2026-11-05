@@ -8,7 +8,7 @@ case "$1" in
   kaldır|kaldir|uninstall|remove-app)
     shift
     exec "$HOME/.jarvis/venv/bin/python" "$HOME/.jarvis/jarvisd/app_uninstaller.py" "$@";;
-  brifing|durum|bellek|ram|memory|yardım|yardim|help|piyasa|borsa|izleme|watchlist|güvenlik|guvenlik|sus|temizle|disk|güç|guc|power|ağ|ag|network|etkinlik|activity|çökmeler|cokmeler|crashes|güncelle|guncelle|update|reklam|adblock|karantina|günlük|gunluk|sor|ask|derin|soru|cevap|evet|hayır|hayir|kapat|dokunma|onay|iptal)
+  brifing|durum|bellek|ram|memory|yardım|yardim|help|kurgu|zeka|orkestra|piyasa|borsa|izleme|watchlist|güvenlik|guvenlik|sus|temizle|disk|güç|guc|power|ağ|ag|network|etkinlik|activity|çökmeler|cokmeler|crashes|güncelle|guncelle|update|reklam|adblock|karantina|günlük|gunluk|sor|ask|derin|soru|cevap|evet|hayır|hayir|kapat|dokunma|onay|iptal)
     printf '%s' "$*" | nc -U -w 180 "$SOCK"; echo;;
   log) exec tail -f "$HOME/.jarvis/jarvisd.log";;
   söyle|soyle|say)

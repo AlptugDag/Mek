@@ -10,11 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.8-green" alt="v0.0.0.8">
+  <img src="https://img.shields.io/badge/version-0.0.0.9-green" alt="v0.0.0.9">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.8:** Kestirmesiz (Shortcuts gerektirmeyen) doğrudan Siri Beta / Apple Intelligence (Siri AI, Campo) sistem düzeyinde entegrasyonu, `/Applications/Mek.app` yerel uygulama paketi, AppleScript `Mek.sdef` sözlüğü, `mek://` evrensel protokolü ve Siri mikrofon çakışma koruması devrede. Önceki sürümler: [`v0.0.0.7`](https://github.com/AlptugDag/Mek/tree/v0.0.0.7), [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6), [`v0.0.0.5`](https://github.com/AlptugDag/Mek/tree/v0.0.0.5).
+> **v0.0.0.9:** Apple Intelligence Neural Conductor ve Doğrudan Video Kurgu Motoru (Premiere Pro 2026 & DaVinci Resolve Studio) devrede. Cihaz içi Apple yapay zekâsı (`FoundationModels`) ile dinamik donanım ve kurgu süreçleri tek noktadan orkestre edilir; milisaniye hassasiyetli akıllı sessizlik kesimi ve kaba kurgu analizi desteklenir. Önceki sürümler: [`v0.0.0.8`](https://github.com/AlptugDag/Mek/tree/v0.0.0.8), [`v0.0.0.7`](https://github.com/AlptugDag/Mek/tree/v0.0.0.7), [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -58,6 +58,18 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **Adobe CEP / Eklenti ve Eşitleme Dizginleme:** Premiere Pro ve After Effects'in arka planda açtığı onlarca `CEPHtmlEngine` (Chromium eklenti paneli), `AdobeIPCBroker`, `CCXProcess` ve `Core Sync` süreci otomatik olarak Verimlilik çekirdeklerine (`taskpolicy -b`) ve düşük önceliğe (`nice +15`) sabitlenir.
 - **Sıfır Sömürü (Non-Parasitic Tarama):** Süreçlerin değişmeyen yol/argüman bilgileri `(pid, create_time)` anahtarıyla önbelleklenir ve tüm modüller tek geçişli anlık görüntüyü paylaşır (`<%0.3` CPU tüketimi).
 - **Bellek Rahatlatma (Memory Relief):** Uygulamalar arası geçişte veya bellek baskısı yükseldiğinde inaktif dosya önbelleği (`purge`) otomatik temizlenir. Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
+
+## Apple Intelligence Neural Conductor ve Otonom Kurgu Motoru
+Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzerindeki Apple Intelligence (`FoundationModels`) ile tek merkezden yönetilir:
+- **Neural Conductor (Yapay Zekâ Orkestratörü):** Donanım telemetrisi (CPU, GPU, bellek basıncı, takas, termal profil) ile açık kurgu yazılımlarının durumunu tek geçişte analiz eder. Çoklu eylemleri (P-core kilidi, Ultra-Scratch RAM-disk, render başlatma, purge vb.) anında planlar ve icra eder.
+- **Adobe Premiere Pro 2026 & DaVinci Resolve Studio Entegrasyonu:**
+  - `mek kurgu durum`: Açık Premiere `.prproj` ve DaVinci Resolve Studio proje/timeline durumunu anlık listeler.
+  - `mek kurgu optimize`: 400 GB/s Ultra-Scratch RAM-diskini bağlar, P-çekirdek önceliğini kilitler, fanı Akıllı Sessiz kipe alır ve inaktif RAM'i boşaltır.
+  - `mek kurgu render`: DaVinci Resolve Studio Deliver sayfasındaki render kuyruğunu tek komutla veya sesle başlatır.
+  - `mek kurgu export`: Premiere Pro'da üzerinde çalışılan aktif sekansı Adobe Media Encoder kuyruğuna iletir.
+  - `mek kurgu sessizlik <dosya.wav>`: Ses kaydını milisaniye hassasiyetli RMS algoritmasıyla analiz ederek nefes/boşluk aralıklarını bulur, kaba kurgu için kesim zaman çizelgesi çıkarır.
+  - `mek zeka "<istek>"`: Apple Intelligence'a serbest Türkçe kurgu ve sistem talimatı verir.
+- **Menü Çubuğu ve Siri:** Menü çubuğuna eklenen `🎬 Video Kurgu (Apple Intelligence)` menüsü ve Siri sesli komutları ile kurgu optimizasyonu ve render işlemleri klavyesiz tetiklenir.
 
 ## Çökme Yönetimi ve Yetim Süreç Temizliği (Sessiz ve Otonom)
 - **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.
