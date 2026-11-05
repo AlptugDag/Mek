@@ -912,8 +912,43 @@ class Mek:
             mb = getattr(self, "memory_budget", None)
             return mb.report() if mb else "Bellek yöneticisi etkin değil."
 
+        if c in ("ramdisk", "scratch", "ultrascratch", "ultra-scratch"):
+            us = getattr(self.services, "ultra_scratch", None)
+            if not us:
+                return "Ultra-Scratch yöneticisi etkin değil."
+            us.ensure_mounted()
+            return us.report()
+
+        if c in ("fan", "termal", "thermal", "soğutma", "sogutma") or c.startswith(("fan ", "termal ")):
+            tf = getattr(self.services, "thermal_fan", None)
+            if not tf:
+                return "Termal & Fan yöneticisi etkin değil."
+            parts = c.split(None, 1)
+            if len(parts) > 1 and parts[1] not in ("durum", "status"):
+                return tf.set_mode(parts[1])
+            return tf.report()
+
+        if c in ("zamanmakinesi", "zm", "timemachine", "proje yedek") or c.startswith(("zamanmakinesi ", "zm ", "timemachine ")):
+            tm = getattr(self.services, "timemachine", None)
+            if not tm:
+                return "Proje Zaman Makinesi etkin değil."
+            tm.scan_and_snapshot()
+            parts = cmd.strip().split()
+            if len(parts) >= 3 and parts[1].lower() in ("geri", "restore", "yukle", "yükle"):
+                ver = 1
+                if parts[-1].isdigit() and len(parts) >= 4:
+                    ver = int(parts[-1])
+                    query = " ".join(parts[2:-1])
+                else:
+                    query = " ".join(parts[2:])
+                ok, msg = tm.restore(query, version_index=ver)
+                return msg
+            query = " ".join(parts[1:]) if len(parts) > 1 else None
+            return tm.report(query=query)
+
         if c in ("yardım", "yardim", "help"):
-            return ("Komutlar: brifing, durum, bellek, izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
+            return ("Komutlar: brifing, durum, bellek, ramdisk, fan [durum|sessiz|otomatik|performans], "
+                    "zamanmakinesi [geri <proje> [no]], izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
                     "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], soru, cevap <seçenek>, "
                     "güncelle [kontrol|durum|şimdi], karantina [geri <no>], günlük [adet], sor <serbest soru> (ya da doğrudan yazın), onay, iptal, reklam [durum|aç|güncelle|kapat], sus <dakika>. "
                     "Yalnızca tanımlı ve güvenli eylemler yürütülür; Mek keyfî terminal komutu çalıştırmaz.")

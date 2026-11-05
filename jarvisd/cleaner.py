@@ -29,10 +29,11 @@ DAY = 86400
 PRIV = "/usr/local/libexec/mek-priv"
 
 # Asla dokunulmayacak yollar (alt yolları dahil)
-PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H(".jarvis"),
+PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H("Movies/Mek Proje Zaman Makinesi"), H(".jarvis"),
            H(".cache/huggingface"), H(".cache/torch"), H(".cache/alptugdub-vc"), H(".cache/whisper"),
            H(".ollama"), H(".lmstudio"), H("Library/Application Support/Topaz Labs LLC/Topaz Video/models"),
            H("Library/Application Support/Adobe/Common/PTX"),
+           H("Library/Application Support/Adobe/Common/.mek_ssd_backing"),
            H("Pictures"), H("Library/Mail"), H("Library/Messages"), H("Library/Mobile Documents"),
            H("Library/Application Support/MobileSync"), H("Library/Keychains"),
            H("Library/Application Support/Blackmagic Design/DaVinci Resolve/Resolve Disk Database")]

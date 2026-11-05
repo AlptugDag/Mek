@@ -23,6 +23,9 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         add("Brifing", to: menu, action: #selector(runBriefing))
         add("Sistem durumu", to: menu, action: #selector(runStatus))
         add("Bellek bütçesi", to: menu, action: #selector(runMemory))
+        add("Ultra-Scratch (400 GB/s RAM Disk)", to: menu, action: #selector(runRamDisk))
+        add("Proje Zaman Makinesi (APFS Klon)", to: menu, action: #selector(runTimeMachine))
+        add("Termal & Fan (Akıllı Sessiz Kip)", to: menu, action: #selector(runFanSilent))
         add("Piyasa izleme listesi", to: menu, action: #selector(runWatchlist))
         add("Güç durumu", to: menu, action: #selector(runPower))
         add("Güvenlik özeti", to: menu, action: #selector(runSecurity))
@@ -180,6 +183,18 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
 
     @objc private func runMemory() {
         send("bellek")
+    }
+
+    @objc private func runRamDisk() {
+        send("ramdisk")
+    }
+
+    @objc private func runTimeMachine() {
+        send("zamanmakinesi")
+    }
+
+    @objc private func runFanSilent() {
+        send("fan sessiz")
     }
 
     @objc private func runWatchlist() {

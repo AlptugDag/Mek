@@ -138,12 +138,56 @@ software_update_install() {
 case "$1" in
   perf)
     /usr/bin/pmset -a powernap 0 disksleep 0 standby 0
-    enable_high_power
     for d in $DAEMONS; do [ -f "$d" ] && /bin/launchctl bootout system "$d" 2>/dev/null; done; true;;
   normal)
     /usr/bin/pmset -a powernap 0 disksleep 10 standby 1
     restore_high_power
     for d in $DAEMONS; do [ -f "$d" ] && /bin/launchctl bootstrap system "$d" 2>/dev/null; done; true;;
+  fan-silent|fan-auto|fan-boost)
+    /usr/bin/python3 - "$1" <<'PY'
+import ctypes, struct, sys
+mode = sys.argv[1]
+iokit = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/IOKit.framework/IOKit")
+iokit.IOServiceMatching.restype = ctypes.c_void_p
+iokit.IOServiceGetMatchingService.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+iokit.IOServiceGetMatchingService.restype = ctypes.c_uint
+iokit.IOServiceOpen.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_uint)]
+iokit.IOConnectCallStructMethod.argtypes = [ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t)]
+
+class Vers(ctypes.Structure): _fields_ = [("major", ctypes.c_ubyte), ("minor", ctypes.c_ubyte), ("build", ctypes.c_ubyte), ("reserved", ctypes.c_ubyte), ("release", ctypes.c_ushort)]
+class PLim(ctypes.Structure): _fields_ = [("version", ctypes.c_ushort), ("length", ctypes.c_ushort), ("cpuPLimit", ctypes.c_uint), ("gpuPLimit", ctypes.c_uint), ("memPLimit", ctypes.c_uint)]
+class KInf(ctypes.Structure): _fields_ = [("dataSize", ctypes.c_uint), ("dataType", ctypes.c_uint), ("dataAttributes", ctypes.c_ubyte)]
+class SMC(ctypes.Structure): _fields_ = [("key", ctypes.c_uint), ("vers", Vers), ("pLimitData", PLim), ("keyInfo", KInf), ("result", ctypes.c_ubyte), ("status", ctypes.c_ubyte), ("data8", ctypes.c_ubyte), ("data32", ctypes.c_uint), ("bytes", ctypes.c_ubyte * 32)]
+
+svc = iokit.IOServiceGetMatchingService(0, iokit.IOServiceMatching(b"AppleSMC"))
+conn = ctypes.c_uint(0)
+iokit.IOServiceOpen(svc, ctypes.c_uint.in_dll(ctypes.CDLL(None), "mach_task_self_").value, 0, ctypes.byref(conn))
+
+def write_smc(k, payload):
+    inp, out = SMC(), SMC()
+    inp.key = struct.unpack(">I", k.encode())[0]
+    inp.data8 = 9
+    osz = ctypes.c_size_t(ctypes.sizeof(out))
+    iokit.IOConnectCallStructMethod(conn.value, 2, ctypes.byref(inp), ctypes.sizeof(inp), ctypes.byref(out), ctypes.byref(osz))
+    inp.keyInfo.dataSize = len(payload)
+    inp.data8 = 6 # kSMCWriteKey
+    for i, b in enumerate(payload):
+        inp.bytes[i] = b
+    iokit.IOConnectCallStructMethod(conn.value, 2, ctypes.byref(inp), ctypes.sizeof(inp), ctypes.byref(out), ctypes.byref(osz))
+
+if mode == "fan-auto":
+    for f in ("F0Md", "F1Md"):
+        write_smc(f, bytes([0]))
+elif mode == "fan-silent":
+    for f, tg in (("F0Md", "F0Tg"), ("F1Md", "F1Tg")):
+        write_smc(f, bytes([1]))
+        write_smc(tg, struct.pack("<f", 1100.0))
+elif mode == "fan-boost":
+    for f, tg in (("F0Md", "F0Tg"), ("F1Md", "F1Tg")):
+        write_smc(f, bytes([1]))
+        write_smc(tg, struct.pack("<f", 1800.0))
+PY
+    true;;
   purge) /usr/sbin/purge;;
   clean-system)
     # Yalnızca yeniden oluşturulabilen sistem verisi; yaşa göre

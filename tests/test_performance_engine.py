@@ -8,9 +8,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "jarvisd"))
 import app_tuner
+import gzip
 import memory_budget
 import prewarmer
+import project_timemachine
 import services
+import thermal_fan
+import ultra_scratch
 
 
 class PerformanceEngineTests(unittest.TestCase):
@@ -221,6 +225,83 @@ class PerformanceEngineTests(unittest.TestCase):
             with open(sample, "wb") as f:
                 f.write(b"x" * 4096)
             self.assertEqual(prewarmer.advise_file(sample), 4096)
+
+    def test_thermal_fan_controller_switches_between_silent_auto_and_boost_safely(self):
+        state = {"Tp01": 42.0, "Tg05": 39.5, "F0Ac": 1330.0, "F1Ac": 1330.0, "F0Mn": 1100.0, "F0Mx": 3500.0, "F0Tg": 1330.0, "F0Md": 0}
+        fake_reader = SimpleNamespace(read_key=lambda k: state.get(k))
+        ctrl = thermal_fan.ThermalFanController(reader=fake_reader)
+        with patch.object(ctrl, "_priv_fan", return_value=True) as priv_mock:
+            # 42°C boştayken sessiz kip (1100 RPM):
+            ctrl.tick(rendering=False, thermal_state=0)
+            self.assertEqual(ctrl.applied_state, "silent")
+            priv_mock.assert_called_with("fan-silent")
+
+            # Sıcaklık 54°C'ye çıktığında anında otomatik donanım SMC eğrisine döner:
+            state["Tp01"] = 54.0
+            ctrl.tick(rendering=False, thermal_state=0)
+            self.assertEqual(ctrl.applied_state, "auto")
+            priv_mock.assert_called_with("fan-auto")
+
+            # Render sırasında 75°C'ye ulaştığında performans ön-soğutmaya (boost) geçer:
+            state["Tp01"] = 75.0
+            ctrl.tick(rendering=True, thermal_state=0)
+            self.assertEqual(ctrl.applied_state, "boost")
+            priv_mock.assert_called_with("fan-boost")
+
+    def test_project_timemachine_clones_valid_prproj_and_restores_version(self):
+        with tempfile.TemporaryDirectory() as td:
+            vault = os.path.join(td, "vault")
+            proj_path = os.path.join(td, "FilmKurgu.prproj")
+            with gzip.open(proj_path, "wb") as gz:
+                gz.write(b"<?xml version='1.0'?><PremiereData Version='1'>v1</PremiereData>" * 4)
+
+            tm = project_timemachine.ProjectTimeMachine(vault_dir=vault, home=td)
+            snap1 = tm.snapshot_project(proj_path)
+            self.assertIsNotNone(snap1)
+            # Değişiklik yokken tekrar klonlamaz:
+            self.assertIsNone(tm.snapshot_project(proj_path))
+
+            # Proje güncellendiğinde yeni anlık klon alır:
+            with gzip.open(proj_path, "wb") as gz:
+                gz.write(b"<?xml version='1.0'?><PremiereData Version='2'>v2_updated</PremiereData>" * 4)
+            os.utime(proj_path, (2000000000, 2000000000))
+            snap2 = tm.snapshot_project(proj_path)
+            self.assertIsNotNone(snap2)
+
+            # Bozuk/yarım yazılmış gzip dosyasını ASLA klonlamaz:
+            with open(proj_path, "wb") as f:
+                f.write(b"\x1f\x8b\x08\x00corrupted_stream_data" * 5)
+            os.utime(proj_path, (2000000100, 2000000100))
+            self.assertIsNone(tm.snapshot_project(proj_path))
+
+            # Önceki sürüme (2 numara = v1) geri yükle:
+            ok, msg = tm.restore("FilmKurgu", version_index=2)
+            self.assertTrue(ok, msg)
+            with gzip.open(proj_path, "rb") as gz:
+                restored_data = gz.read()
+            self.assertIn(b"Version='1'", restored_data)
+
+    def test_ultra_scratch_hydrates_ram_disk_and_creates_symlinks(self):
+        with tempfile.TemporaryDirectory() as td:
+            fake_ram = os.path.join(td, "ram_mount")
+            fake_adobe = os.path.join(td, "AdobeCommon")
+            fake_mirror = os.path.join(td, "mirror")
+            os.makedirs(fake_ram, exist_ok=True)
+            peak_orig = os.path.join(fake_adobe, "Peak Files")
+            os.makedirs(peak_orig, exist_ok=True)
+            sample_pek = os.path.join(peak_orig, "test.pek")
+            with open(sample_pek, "wb") as f:
+                f.write(b"PEAKDATA" * 100)
+
+            mgr = ultra_scratch.UltraScratchManager(
+                size_gb=1, mount_point=fake_ram, adobe_common=fake_adobe, mirror_root=fake_mirror
+            )
+            with patch.object(mgr, "is_mounted", return_value=True):
+                mgr._configure_volume_flags()
+                mgr._setup_symlinks_and_hydrate()
+                self.assertTrue(os.path.islink(peak_orig))
+                self.assertTrue(os.path.exists(os.path.join(fake_ram, "AdobeCommon", "Peak Files", "test.pek")))
+                self.assertTrue(os.path.exists(os.path.join(fake_mirror, "Peak Files", "test.pek")))
 
 
 if __name__ == "__main__":

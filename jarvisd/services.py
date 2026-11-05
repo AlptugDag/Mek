@@ -35,6 +35,9 @@ from config import (
 import app_tuner
 import context as ctx
 from prewarmer import PreWarmer
+from project_timemachine import ProjectTimeMachine
+from thermal_fan import ThermalFanController
+from ultra_scratch import UltraScratchManager
 
 log = logging.getLogger("mek.services")
 UID = os.getuid()
@@ -225,11 +228,15 @@ class ServiceManager:
         self.bg_clamped = set()       # E-çekirdeğe alınan sistem indeksleme süreçleri
         self.next_guard = 0.0
         self.next_tune = 0.0
+        self.next_tm_scan = 0.0
         self.last_adobe_seen = time.time()
         self.last_purge = 0.0
         self.last_front_pro = None
         self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
         self.prewarmer = PreWarmer()
+        self.ultra_scratch = UltraScratchManager()
+        self.timemachine = ProjectTimeMachine()
+        self.thermal_fan = ThermalFanController()
         priv("restore-high-power")
         self._ensure_plugin_services()
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
@@ -239,6 +246,8 @@ class ServiceManager:
 
     def _tune_and_prewarm_bg(self):
         try:
+            self.ultra_scratch.ensure_mounted()
+            self.timemachine.scan_and_snapshot()
             app_tuner.tune_all()
             self.prewarmer.tick_async(pressure=1, mem_pct=50.0)
         except Exception as e:
@@ -426,12 +435,20 @@ class ServiceManager:
         if now >= self.next_guard:
             self.next_guard = now + 30
             self.guard(snap)
+        if now >= self.next_tm_scan:
+            self.next_tm_scan = now + 30
+            threading.Thread(
+                target=self._periodic_scratch_and_tm,
+                args=(getattr(snap, "pressure", 1),),
+                daemon=True,
+            ).start()
         if now >= self.next_tune:
             self.next_tune = now + 900
             self.prewarmer.tick_async(
                 pressure=getattr(snap, "pressure", 1),
                 mem_pct=getattr(snap, "mem_pct", 0.0),
             )
+        self.thermal_fan.tick(rendering=rendering, thermal_state=getattr(snap, "thermal", 0))
 
         working = self.working_pids(snap)
         working_set = set(working)
@@ -539,7 +556,22 @@ class ServiceManager:
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         threading.Thread(target=self._tune_and_prewarm_bg, daemon=True).start()
 
+    def _periodic_scratch_and_tm(self, pressure=1):
+        try:
+            self.timemachine.scan_and_snapshot()
+            self.ultra_scratch.tick(pressure=pressure)
+        except Exception as e:
+            log.warning("Ultra-Scratch / Proje Zaman Makinesi döngü hatası: %s", e)
+
     def shutdown(self):
+        try:
+            self.ultra_scratch.sync_to_ssd(force=True)
+        except Exception:
+            pass
+        try:
+            self.thermal_fan.shutdown()
+        except Exception:
+            pass
         if self.profile != "normal":
             self.enter_normal()
 

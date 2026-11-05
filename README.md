@@ -10,11 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.4-green" alt="v0.0.0.4">
+  <img src="https://img.shields.io/badge/version-0.0.0.5-green" alt="v0.0.0.5">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.4:** Apple Silicon M1 Max kurgu canavarı sürümü. Metal Heap & Sıfır Kopya GPU havuzu, sınırsız Multi-Frame Rendering (MFR), 400 GB/s birleşik RAM sayfa ön-ısıtması (`prewarmer`), sürümden bağımsız (`2026` → `2030+`) eklenti ve kurgu servisi koruması, dinamik aktif/boşta bellek dağılımı, Mac Studio Hoparlörü %30 bağımsız ses mimarisi, menü çubuğunda sade "Mek" metni ve sessiz kilit/çökme onarımı devrede. Önceki sürümler: [`v0.0.0.3`](https://github.com/AlptugDag/Mek/tree/v0.0.0.3), [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2).
+> **v0.0.0.5:** 400 GB/s APFS RAM-Disk (**Ultra-Scratch** — `Peak Files`, `Media Cache`, `PTX` için sıfır gecikmeli RAM önbellek ve kalıcı SSD aynası), APFS Copy-on-Write (`cp -c`) **Sıfır Disk Alanlı Proje Zaman Makinesi** (`project_timemachine.py`), AppleSMC doğrudan sensör telemetrili **Akıllı Sessiz Termal & Fan Yöneticisi** (`thermal_fan.py` — 50°C altında 1100 RPM sessiz kip, 52°C'de anında otomatik SMC soğutma), Metal Heap GPU havuzu ve 400 GB/s RAM ön-ısıtıcı (`prewarmer.py`) devrede. Önceki sürümler: [`v0.0.0.4`](https://github.com/AlptugDag/Mek/tree/v0.0.0.4), [`v0.0.0.3`](https://github.com/AlptugDag/Mek/tree/v0.0.0.3), [`v0.0.0.2`](https://github.com/AlptugDag/Mek/tree/v0.0.0.2).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
