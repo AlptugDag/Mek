@@ -135,6 +135,26 @@ Gereken kararı analiz et ve aşağıdaki JSON şemasında çıktı ver:
             elif act in ("onbellek_temizle", "ram_relief"):
                 subprocess.run(["/usr/sbin/purge"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return "İnaktif dosya önbelleği temizlendi."
+            elif act.startswith("film_rengi"):
+                parts = action_name.split(":", 1)
+                film = parts[1].strip() if len(parts) > 1 else "matrix"
+                if self.kurgu:
+                    return self.kurgu.apply_film_color(film)
+            elif act.startswith("efekt"):
+                parts = action_name.split(":", 1)
+                desc = parts[1].strip() if len(parts) > 1 else "sinematik parıltı"
+                if self.kurgu:
+                    return self.kurgu.synthesize_effect(desc)
+            elif act.startswith("kaba_kurgu"):
+                parts = action_name.split(":", 1)
+                p = parts[1].strip() if len(parts) > 1 else ""
+                if self.kurgu and p:
+                    return self.kurgu.build_rough_cut(p)
+            elif act.startswith("renk_klonla"):
+                parts = action_name.split(":", 1)
+                p = parts[1].strip() if len(parts) > 1 else ""
+                if self.kurgu and p:
+                    return self.kurgu.clone_image_color(p)
         except Exception as e:
             log.error("Eylem icra hatası (%s): %s", action_name, e)
         return None

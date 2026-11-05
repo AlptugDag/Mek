@@ -10,6 +10,7 @@ Lightweight, zero-load architecture.
 
 import sys
 import os
+import re
 import time
 import subprocess
 import datetime
@@ -379,7 +380,19 @@ def build_periodic_message() -> str:
         return f"Alptuğ Bey, saat {time_str}. Her şey yolunda, emrinizdeyim efendim."
 
 
+def normalize_phonetics(text: str) -> str:
+    """Yabancı marka ve terimlerin Türkçe EMA Lightning TTS tarafından doğru telaffuz edilmesi için fonetik düzeltme."""
+    if not text:
+        return text
+    # Apple -> Epıl, apple -> epıl, APPLE -> EPIL
+    text = re.sub(r"\bApple\b", "Epıl", text)
+    text = re.sub(r"\bapple\b", "epıl", text)
+    text = re.sub(r"\bAPPLE\b", "EPIL", text)
+    return text
+
+
 def speak(text: str):
+    text = normalize_phonetics(text)
     print(f"[Mek] Sentezleniyor: {text}")
     try:
         from ema_lightning import EMA

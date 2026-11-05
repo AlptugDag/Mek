@@ -27,7 +27,7 @@ REQUIRED_ARGS = {"uygulama_kapat": ("ad",), "karantina_geri": ("no",), "arka_pla
 OBS_LIMIT = 1200
 CONFIRM_TTL_S = 300
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-PROTECTED_NAMES = re.compile(r"kernel_task|WindowServer|launchd|loginwindow|Finder|coreaudiod|jarvisd|mek", re.I)
+PROTECTED_NAMES = re.compile(r"kernel_task|WindowServer|launchd|loginwindow|Finder|coreaudiod|jarvisd|mek|siri|campo|assistantd", re.I)
 
 
 def parse_decision(text):
@@ -138,6 +138,22 @@ class Agent:
                     f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
                     f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
 
+        def film_rengi(args):
+            film = str(args.get("film", "matrix")).strip()
+            return m.kurgu.apply_film_color(film) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def efekt_yap(args):
+            tarif = str(args.get("tarif", "")).strip()
+            return m.kurgu.synthesize_effect(tarif) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def renk_klonla(args):
+            yol = str(args.get("yol", "")).strip()
+            return m.kurgu.clone_image_color(yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def kaba_kurgu(args):
+            yol = str(args.get("yol", "")).strip()
+            return m.kurgu.build_rough_cut(yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
         T = {
             "durum": ("Anlık CPU/GPU/bellek/disk/profil özeti", "oku", self._cmd("durum")),
             "guc": ("Güç ve UPS durumu", "oku", self._cmd("güç")),
@@ -150,6 +166,10 @@ class Agent:
             "top_processes": ("En çok bellek/CPU kullanan süreçler", "oku", top_processes),
             "kurgu_durumu": ("Açık Premiere Pro veya DaVinci Resolve kurgu projelerinin durumu", "oku", kurgu_durum),
             "kurgu_sessizlik": ("Ses kaydındaki sessizlikleri tespit edip kaba kurgu kesim noktaları çıkar. args: yol", "oku", kurgu_sessizlik),
+            "film_rengi": ("Seçilen filmin sinematik renk paletini (Matrix, Blade Runner, Oppenheimer, Amelie, Dune vb.) 3D LUT olarak üretip uygula. args: film", "guvenli", film_rengi),
+            "efekt_yap": ("Doğal dille tarif edilen görsel efekti (parıltı/bloom, gren, vinyet vb.) üretip uygula. args: tarif", "guvenli", efekt_yap),
+            "renk_klonla": ("Referans bir görselin renk paletini klonlayıp 3D LUT olarak aktar. args: yol", "guvenli", renk_klonla),
+            "kaba_kurgu": ("Ses/video dosyasından sessizlik ve nefesleri kesip otomatik FCPXML/EDL kaba kurgu sekansı üret. args: yol", "guvenli", kaba_kurgu),
             "temizle": ("Günlük temizlik başlat (kurgu açıkken reddeder)", "guvenli", self._cmd("temizle")),
             "kurgu_optimize": ("Kurgu ortamını optimize et (P-core önceliği, Ultra-Scratch RAM-disk, sessiz fan, purge)", "guvenli", kurgu_optimize),
             "davinci_render": ("DaVinci Resolve Deliver sayfasındaki render işlerini başlat", "guvenli", davinci_render),

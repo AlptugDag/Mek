@@ -233,6 +233,9 @@ class Mek:
         """Speak requests in FIFO order so startup greetings cannot be overtaken."""
         if not text or not text.strip():
             return
+        text = re.sub(r"\bApple\b", "Epıl", text)
+        text = re.sub(r"\bapple\b", "epıl", text)
+        text = re.sub(r"\bAPPLE\b", "EPIL", text)
         with self.speech_worker_lock:
             if not self.speech_worker or not self.speech_worker.is_alive():
                 self.speech_worker = threading.Thread(target=self._speech_loop, daemon=True)
@@ -585,7 +588,7 @@ class Mek:
             target = cmd or name or ""
             if (pid == os.getpid()
                     or pid in lineage
-                    or re.search(r"kernel_task|WindowServer|coreaudiod|launchd", name)
+                    or re.search(r"kernel_task|WindowServer|coreaudiod|launchd|siri|campo|assistantd", name, re.I)
                     or services.is_creative_or_plugin(target)):
                 continue
             alive.add(pid)
@@ -977,6 +980,37 @@ class Mek:
             return (f"Sessizlik Analizi ({res['file']}): Toplam {res['total_duration_sec']}s, "
                     f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
                     f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
+
+        if c.startswith("kurgu renk"):
+            parts = cmd.split(None, 2)
+            film = parts[2].strip() if len(parts) > 2 else "matrix"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            return self.kurgu.apply_film_color(film)
+
+        if c.startswith("kurgu efekt"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu efekt <efekt tarifi>"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            return self.kurgu.synthesize_effect(parts[2].strip())
+
+        if c.startswith("kurgu klon"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu klon /yol/referans_gorsel.jpg"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            return self.kurgu.clone_image_color(parts[2].strip())
+
+        if c.startswith("kurgu kaba"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu kaba /yol/klip_veya_klasor"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            return self.kurgu.build_rough_cut(parts[2].strip())
 
         if c.startswith(("zeka ", "orkestra ", "ai ")):
             if not hasattr(self, "neural_conductor") or not self.neural_conductor:

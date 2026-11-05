@@ -96,6 +96,12 @@ public final class MekScriptCommand: NSScriptCommand {
             return MekSocketBridge.execute("kurgu export")
         } else if cmd == "kurgusessizlik" {
             return MekSocketBridge.execute("kurgu sessizlik " + direct)
+        } else if cmd == "kurgurenk" {
+            return MekSocketBridge.execute("kurgu renk " + direct)
+        } else if cmd == "kurguefekt" {
+            return MekSocketBridge.execute("kurgu efekt " + direct)
+        } else if cmd == "kurgukaba" {
+            return MekSocketBridge.execute("kurgu kaba " + direct)
         }
         return MekSocketBridge.execute(direct.isEmpty ? cmd : "\(cmd) \(direct)")
     }
@@ -399,6 +405,10 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         add("Kurgu Ortamını Optimize Et (P-Core + RAM-disk)", to: kurguSubMenu, action: #selector(runKurguOptimize))
         add("DaVinci Render Kuyruğunu Başlat", to: kurguSubMenu, action: #selector(runDaVinciRender))
         add("Premiere Sekansını Media Encoder'a Aktar", to: kurguSubMenu, action: #selector(runPremiereExport))
+        kurguSubMenu.addItem(.separator())
+        add("Film Rengi Yap (Matrix, Oppenheimer, Dune…)", to: kurguSubMenu, action: #selector(runPromptFilmColor))
+        add("Efekt Sentezle (Doğal Dil ile Efekt)", to: kurguSubMenu, action: #selector(runPromptEffect))
+        add("Otonom Kaba Kurgu (FCPXML / EDL)", to: kurguSubMenu, action: #selector(runPromptRoughCut))
         kurguItem.submenu = kurguSubMenu
         menu.addItem(kurguItem)
         menu.addItem(.separator())
@@ -449,6 +459,15 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         } else if eventID == 0x4B524753 { // KRGS: kurguSessizlik
             let file = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
             cmd = "kurgu sessizlik " + file
+        } else if eventID == 0x524E4B31 { // RNK1: kurguRenk
+            let f = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? "matrix"
+            cmd = "kurgu renk " + f
+        } else if eventID == 0x45465831 { // EFX1: kurguEfekt
+            let e = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = "kurgu efekt " + e
+        } else if eventID == 0x4B424131 { // KBA1: kurguKaba
+            let k = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = "kurgu kaba " + k
         }
 
         let result = MekSocketBridge.execute(cmd)
@@ -589,6 +608,48 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
     @objc private func runKurguOptimize() { send("kurgu optimize") }
     @objc private func runDaVinciRender() { send("kurgu render") }
     @objc private func runPremiereExport() { send("kurgu export") }
+
+    @objc private func runPromptFilmColor() {
+        let alert = makeAlert()
+        alert.messageText = "Film Rengi Yap (Apple Intelligence)"
+        alert.informativeText = "Hangi filmin renk paletini 3D LUT olarak üretmek istersiniz? (Örnek: Matrix, Blade Runner 2049, Oppenheimer, Amélie, Dune, Seven, Wes Anderson)"
+        alert.addButton(withTitle: "Üret ve Uygula")
+        alert.addButton(withTitle: "Vazgeç")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "Film adı (örn: Matrix)"
+        alert.accessoryView = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !val.isEmpty { send("kurgu renk " + val) }
+    }
+
+    @objc private func runPromptEffect() {
+        let alert = makeAlert()
+        alert.messageText = "Sinematik Efekt Sentezle (Apple Intelligence)"
+        alert.informativeText = "İstediğiniz görsel efekti ve atmosferi doğal dille tarif edin:"
+        alert.addButton(withTitle: "Sentezle")
+        alert.addButton(withTitle: "Vazgeç")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "Örnek: rüya gibi yumuşak parıltı, nostaljik soluk renkler ve gren"
+        alert.accessoryView = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !val.isEmpty { send("kurgu efekt " + val) }
+    }
+
+    @objc private func runPromptRoughCut() {
+        let alert = makeAlert()
+        alert.messageText = "Otonom Kaba Kurgu (FCPXML / EDL)"
+        alert.informativeText = "Kaba kurgusu yapılacak video/ses dosyasının veya klasörünün tam yolunu girin:"
+        alert.addButton(withTitle: "Kaba Kurgu Yap")
+        alert.addButton(withTitle: "Vazgeç")
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        input.placeholderString = "/Users/.../roportaj.wav veya klasör"
+        alert.accessoryView = input
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !val.isEmpty { send("kurgu kaba " + val) }
+    }
 
     @objc private func promptForCommand() {
         let alert = makeAlert()

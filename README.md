@@ -10,11 +10,11 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.0.9-green" alt="v0.0.0.9">
+  <img src="https://img.shields.io/badge/version-0.0.1.0-green" alt="v0.0.1.0">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.0.9:** Apple Intelligence Neural Conductor ve Doğrudan Video Kurgu Motoru (Premiere Pro 2026 & DaVinci Resolve Studio) devrede. Cihaz içi Apple yapay zekâsı (`FoundationModels`) ile dinamik donanım ve kurgu süreçleri tek noktadan orkestre edilir; milisaniye hassasiyetli akıllı sessizlik kesimi ve kaba kurgu analizi desteklenir. Önceki sürümler: [`v0.0.0.8`](https://github.com/AlptugDag/Mek/tree/v0.0.0.8), [`v0.0.0.7`](https://github.com/AlptugDag/Mek/tree/v0.0.0.7), [`v0.0.0.6`](https://github.com/AlptugDag/Mek/tree/v0.0.0.6).
+> **v0.0.1.0:** Apple Intelligence Vision & Color Grading Motoru (Matrix, Oppenheimer, Blade Runner vb. film rengi emülasyonu, görselden renk klonlama, doğal dille efekt sentezi), Otonom Kaba Kurgu Motoru (FCPXML / CMX 3600 EDL), TTS için Türkçe fonetik "Epıl" telaffuz optimizasyonu ve Siri yanıt vermeme/kilitlenme kalkanı devrede. Önceki sürümler: [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9), [`v0.0.0.8`](https://github.com/AlptugDag/Mek/tree/v0.0.0.8).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -59,17 +59,24 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **Sıfır Sömürü (Non-Parasitic Tarama):** Süreçlerin değişmeyen yol/argüman bilgileri `(pid, create_time)` anahtarıyla önbelleklenir ve tüm modüller tek geçişli anlık görüntüyü paylaşır (`<%0.3` CPU tüketimi).
 - **Bellek Rahatlatma (Memory Relief):** Uygulamalar arası geçişte veya bellek baskısı yükseldiğinde inaktif dosya önbelleği (`purge`) otomatik temizlenir. Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
 
-## Apple Intelligence Neural Conductor ve Otonom Kurgu Motoru
-Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzerindeki Apple Intelligence (`FoundationModels`) ile tek merkezden yönetilir:
-- **Neural Conductor (Yapay Zekâ Orkestratörü):** Donanım telemetrisi (CPU, GPU, bellek basıncı, takas, termal profil) ile açık kurgu yazılımlarının durumunu tek geçişte analiz eder. Çoklu eylemleri (P-core kilidi, Ultra-Scratch RAM-disk, render başlatma, purge vb.) anında planlar ve icra eder.
-- **Adobe Premiere Pro 2026 & DaVinci Resolve Studio Entegrasyonu:**
-  - `mek kurgu durum`: Açık Premiere `.prproj` ve DaVinci Resolve Studio proje/timeline durumunu anlık listeler.
+## Apple Intelligence Vision, Sinematik Renk & Otonom Kurgu Motoru
+Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzerindeki Apple Intelligence (`FoundationModels`) ve Vision motoru ile tek merkezden yönetilir:
+- **Neural Conductor (Yapay Zekâ Orkestratörü):** Donanım telemetrisi (CPU, GPU, bellek basıncı, takas, termal profil) ile açık kurgu yazılımlarının durumunu tek geçişte analiz eder. Çoklu eylemleri anında planlar ve icra eder.
+- **Sinematik Renk Derecelendirme & Film Emülasyonu (3D .cube LUT):**
+  - `mek kurgu renk <film>`: İstediğiniz filmin ikonik renk paletini (*The Matrix, Blade Runner 2049, Oppenheimer, Amélie, Dune, Seven / Fincher, Wes Anderson, The Godfather, Kodachrome 64, Film Noir*) 33x33x33 3D `.cube` LUT olarak anında üretir. Hem DaVinci Resolve (`~/Library/.../LUT/Mek`) hem de Premiere Pro Lumetri (`~/Library/.../LUTs/Creative`) dizinlerine doğrudan kaydeder; DaVinci açıksa aktif klibe otomatik atar.
+  - `mek kurgu klon <referans_görsel.jpg>`: Herhangi bir fotoğrafın veya film karesinin renk dağılımını (histogram ve renk momentleri) analiz ederek ona birebir uyan 3D LUT üretir.
+  - `mek kurgu efekt "<doğal dil tarifi>"`: Apple Intelligence'a tarif ettiğiniz atmosferi (*"rüya gibi yumuşak parıltı (bloom), nostaljik soluk renkler ve 35mm film greni"*) ayrıştırır; renk derecelendirmesi ve optik efekt bileşenlerini (bloom, halation, grain, vignette) sentezleyip kurgunuza entegre eder.
+- **Otonom Kaba Kurgu Motoru (FCPXML & CMX 3600 EDL):**
+  - `mek kurgu kaba <dosya_veya_klasör>`: Ham video veya ses kayıtlarını milisaniye hassasiyetli RMS algoritmasıyla tarar. Nefes ve ölü boşlukları akıllı ses tamponları (80 ms pre-pad, 120 ms post-pad ile harf yutulmasını önleyerek) temizler.
+  - Premiere Pro 2026, DaVinci Resolve Studio ve Final Cut Pro uyumlu standart **FCPXML** ve **CMX 3600 EDL** montaj çizelgesi oluşturur. DaVinci Resolve açıksa sekansı timeline'a otomatik yerleştirir.
+- **Pro Kurgu Ortam Yönetimi:**
+  - `mek kurgu durum`: Açık Premiere `.prproj` ve DaVinci Resolve Studio proje/timeline durumunu listeler.
   - `mek kurgu optimize`: 400 GB/s Ultra-Scratch RAM-diskini bağlar, P-çekirdek önceliğini kilitler, fanı Akıllı Sessiz kipe alır ve inaktif RAM'i boşaltır.
-  - `mek kurgu render`: DaVinci Resolve Studio Deliver sayfasındaki render kuyruğunu tek komutla veya sesle başlatır.
-  - `mek kurgu export`: Premiere Pro'da üzerinde çalışılan aktif sekansı Adobe Media Encoder kuyruğuna iletir.
-  - `mek kurgu sessizlik <dosya.wav>`: Ses kaydını milisaniye hassasiyetli RMS algoritmasıyla analiz ederek nefes/boşluk aralıklarını bulur, kaba kurgu için kesim zaman çizelgesi çıkarır.
-  - `mek zeka "<istek>"`: Apple Intelligence'a serbest Türkçe kurgu ve sistem talimatı verir.
-- **Menü Çubuğu ve Siri:** Menü çubuğuna eklenen `🎬 Video Kurgu (Apple Intelligence)` menüsü ve Siri sesli komutları ile kurgu optimizasyonu ve render işlemleri klavyesiz tetiklenir.
+  - `mek kurgu render`: DaVinci Deliver render kuyruğunu başlatır.
+  - `mek kurgu export`: Premiere sekansını Media Encoder kuyruğuna gönderir.
+- **Menü Çubuğu ve Siri:** Menü çubuğuna eklenen `🎬 Video Kurgu (Apple Intelligence)` alt menüsü ve Siri sesli komutları ile renk derecelendirme, efekt sentezi ve kaba kurgu klavyesiz tetiklenir.
+- **Doğal Türkçe Fonetik ("Epıl"):** EMA Lightning TTS motoru, "Apple" kelimesini ve tamlamalarını (Apple Intelligence, Apple Studio vb.) yabancı aksan bozulması olmadan akıcı ve net bir şekilde **"Epıl"** olarak seslendirir.
+- **Siri Kilitlenme Kalkanı:** macOS 27 beta üzerinde çalışan Siri ve Siri AI süreçleri işlemci kaçak dizginleme kuralından tam muaf tutulur; arka plan QoS kısıtlamasına sokulmayarak yanıt vermeme hatası kesin olarak önlenir.
 
 ## Çökme Yönetimi ve Yetim Süreç Temizliği (Sessiz ve Otonom)
 - **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.

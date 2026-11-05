@@ -73,5 +73,23 @@
             <direct-parameter type="text" description="Ses dosyasının tam dosya yolu."/>
             <result type="text" description="Sessizlik analizi ve kesim özeti."/>
         </command>
+
+        <command name="kurguRenk" code="MEKSRNK1" description="İkonik film rengini (Matrix, Blade Runner, Oppenheimer vb.) 3D LUT olarak üretip kurguya uygular.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Film veya stil adı (örn: Matrix, Blade Runner, Oppenheimer)."/>
+            <result type="text" description="Renk derecelendirme sonucu."/>
+        </command>
+
+        <command name="kurguEfekt" code="MEKSEFX1" description="Doğal dille tarif edilen sinematik görsel efekti üretip uygular.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Efekt tarifi (örn: rüya gibi yumuşak parıltı ve gren)."/>
+            <result type="text" description="Efekt sentezi sonucu."/>
+        </command>
+
+        <command name="kurguKaba" code="MEKSKBA1" description="Nefes ve sessizlikleri temizleyip Premiere ve DaVinci için otonom FCPXML/EDL kaba kurgu üretir.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" description="Medya dosyası veya klasör yolu."/>
+            <result type="text" description="Kaba kurgu montaj sonucu."/>
+        </command>
     </suite>
 </dictionary>

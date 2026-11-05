@@ -27,6 +27,10 @@ class KurguManager:
     def __init__(self, services=None, events=None):
         self.services = services
         self.events = events
+        from vision_color import VisionColorEngine
+        from rough_cut import RoughCutEngine
+        self.vision = VisionColorEngine(kurgu_mgr=self)
+        self.rough_cut = RoughCutEngine(kurgu_mgr=self)
 
     # --- Kurgu Yazılım Durumları ---
 
@@ -284,3 +288,30 @@ end tell
         except Exception as e:
             log.error("Sessizlik analizi hatası: %s", e)
             return {"error": str(e)}
+
+    # --- Sinematik Renk, Efekt & Otonom Kaba Kurgu ---
+
+    def apply_film_color(self, film_name: str) -> str:
+        res = self.vision.apply_film_grade(film_name)
+        davinci_msg = " DaVinci Resolve klibine uygulandı." if res.get("applied_to_davinci") else ""
+        return f"{res['film']} film rengi 3D LUT olarak üretildi ({res['lut_name']}). Premiere ve DaVinci'ye kaydedildi.{davinci_msg}"
+
+    def clone_image_color(self, image_path: str, look_name: str = "Referans") -> str:
+        res = self.vision.clone_color_from_image(image_path, look_name)
+        if "error" in res:
+            return f"Hata: {res['error']}"
+        davinci_msg = " DaVinci klibine atandı." if res.get("applied_to_davinci") else ""
+        return f"'{res['reference_image']}' görselinin renk dağılımı 3D LUT olarak çıkarıldı ({res['lut_name']}).{davinci_msg}"
+
+    def synthesize_effect(self, prompt: str) -> str:
+        res = self.vision.synthesize_effect(prompt)
+        fx = res.get("optical_fx", {})
+        fx_desc = f"Bloom: %{fx.get('bloom', 0)*100:.0f}, Gren: %{fx.get('film_grain', 0)*100:.0f}, Vinyet: %{fx.get('vignette', 0)*100:.0f}"
+        davinci_msg = " DaVinci Resolve'a uygulandı." if res.get("applied_to_davinci") else ""
+        return f"Efekt üretildi ({res['name']}): {res['description']} ({fx_desc}). LUT ve parametreler kaydedildi.{davinci_msg}"
+
+    def build_rough_cut(self, target_path: str, music_path: Optional[str] = None) -> str:
+        res = self.rough_cut.process_file_or_folder(target_path, music_path)
+        if "error" in res:
+            return f"Kaba kurgu hatası: {res['error']}"
+        return res["message"]
