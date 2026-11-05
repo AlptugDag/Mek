@@ -154,6 +154,16 @@ class Agent:
             yol = str(args.get("yol", "")).strip()
             return m.kurgu.build_rough_cut(yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
 
+        def multicam_kurgu(args):
+            yol = str(args.get("yol", "")).strip()
+            stil = str(args.get("stil", "dinamik podcast")).strip()
+            return m.kurgu.direct_multicam(yol, stil) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
+        def viral_hook(args):
+            yol = str(args.get("yol", "")).strip()
+            metin = str(args.get("metin", "")).strip() or None
+            return m.kurgu.extract_viral_hook(yol, transcript=metin) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+
         T = {
             "durum": ("Anlık CPU/GPU/bellek/disk/profil özeti", "oku", self._cmd("durum")),
             "guc": ("Güç ve UPS durumu", "oku", self._cmd("güç")),
@@ -170,6 +180,8 @@ class Agent:
             "efekt_yap": ("Doğal dille tarif edilen görsel efekti (parıltı/bloom, gren, vinyet vb.) üretip uygula. args: tarif", "guvenli", efekt_yap),
             "renk_klonla": ("Referans bir görselin renk paletini klonlayıp 3D LUT olarak aktar. args: yol", "guvenli", renk_klonla),
             "kaba_kurgu": ("Ses/video dosyasından sessizlik ve nefesleri kesip otomatik FCPXML/EDL kaba kurgu sekansı üret. args: yol", "guvenli", kaba_kurgu),
+            "multicam_kurgu": ("Röportaj ve çoklu kamera çekimlerini konuşmacı sesine ve stile göre otonom kurgula. args: yol, stil", "guvenli", multicam_kurgu),
+            "viral_hook": ("Sosyal medya için videodaki en vurucu 3-7 saniyelik kancayı (viral hook) bulup sekansın 0. saniyesine yerleştir. args: yol", "guvenli", viral_hook),
             "temizle": ("Günlük temizlik başlat (kurgu açıkken reddeder)", "guvenli", self._cmd("temizle")),
             "kurgu_optimize": ("Kurgu ortamını optimize et (P-core önceliği, Ultra-Scratch RAM-disk, sessiz fan, purge)", "guvenli", kurgu_optimize),
             "davinci_render": ("DaVinci Resolve Deliver sayfasındaki render işlerini başlat", "guvenli", davinci_render),

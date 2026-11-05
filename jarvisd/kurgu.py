@@ -29,8 +29,12 @@ class KurguManager:
         self.events = events
         from vision_color import VisionColorEngine
         from rough_cut import RoughCutEngine
+        from multicam_director import MulticamDirector
+        from viral_hook import ViralHookSynthesizer
         self.vision = VisionColorEngine(kurgu_mgr=self)
         self.rough_cut = RoughCutEngine(kurgu_mgr=self)
+        self.multicam = MulticamDirector(kurgu_mgr=self)
+        self.viral_hook = ViralHookSynthesizer(kurgu_mgr=self)
 
     # --- Kurgu Yazılım Durumları ---
 
@@ -315,3 +319,38 @@ end tell
         if "error" in res:
             return f"Kaba kurgu hatası: {res['error']}"
         return res["message"]
+
+    # --- Otonom Çoklu Kamera Yönetmeni (Multicam Director) ---
+
+    def direct_multicam(self, sources: Any, style_prompt: str = "dinamik podcast") -> str:
+        if isinstance(sources, str):
+            sources_list = [s.strip() for s in sources.split(",") if s.strip()]
+        else:
+            sources_list = list(sources)
+        res = self.multicam.direct_multicam(sources_list, style_prompt)
+        if "error" in res:
+            return f"Çoklu kamera kurgu hatası: {res['error']}"
+        return res["message"]
+
+    # --- Otonom Viral Hook Sentezleyici ---
+
+    def extract_viral_hook(self, video_path: str, transcript: Optional[str] = None, gemini_key: Optional[str] = None) -> str:
+        if gemini_key:
+            self.viral_hook.gemini_api_key = gemini_key
+        res = self.viral_hook.synthesize_viral_hook(video_path, transcript)
+        if "error" in res:
+            return f"Viral hook hatası: {res['error']}"
+        return res["message"]
+
+    def auto_edit_with_hook(self, target_path: str, style_prompt: str = "dinamik podcast") -> str:
+        """Önce çoklu kamera / kaba kurguyu yapar, ardından en vurucu hook'u başa monte eder."""
+        if os.path.isdir(target_path):
+            mc_res = self.multicam.direct_multicam([target_path], style_prompt)
+            if "error" in mc_res:
+                return f"Hata: {mc_res['error']}"
+            return f"Çoklu kamera kurgusu tamamlandı ({mc_res['cuts_count']} kesim). CMX 3600 EDL ve FCPXML hazır: {mc_res['fcpxml_path']}"
+        else:
+            vh_res = self.viral_hook.synthesize_viral_hook(target_path)
+            if "error" in vh_res:
+                return f"Hata: {vh_res['error']}"
+            return vh_res["message"]

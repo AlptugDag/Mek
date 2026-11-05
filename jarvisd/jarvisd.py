@@ -1012,6 +1012,48 @@ class Mek:
                 return "Kurgu yöneticisi etkin değil."
             return self.kurgu.build_rough_cut(parts[2].strip())
 
+        if c.startswith("kurgu multicam"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu multicam /yol/klasor_veya_dosyalar [--stil 'dinamik podcast']"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            rest = parts[2].strip()
+            style = "dinamik podcast"
+            if "--stil" in rest:
+                src_part, style_part = rest.split("--stil", 1)
+                rest = src_part.strip()
+                style = style_part.strip().strip("'\"")
+            return self.kurgu.direct_multicam(rest, style)
+
+        if c.startswith("kurgu hook"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu hook /yol/video.mp4 [--key GEMINI_KEY]"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            rest = parts[2].strip()
+            key = None
+            if "--key" in rest:
+                v_part, k_part = rest.split("--key", 1)
+                rest = v_part.strip()
+                key = k_part.strip()
+            return self.kurgu.extract_viral_hook(rest, gemini_key=key)
+
+        if c.startswith("kurgu oto"):
+            parts = cmd.split(None, 2)
+            if len(parts) < 3:
+                return "Kullanım: kurgu oto /yol/klasor_veya_video [--stil 'dinamik podcast']"
+            if not hasattr(self, "kurgu") or not self.kurgu:
+                return "Kurgu yöneticisi etkin değil."
+            rest = parts[2].strip()
+            style = "dinamik podcast"
+            if "--stil" in rest:
+                src_part, style_part = rest.split("--stil", 1)
+                rest = src_part.strip()
+                style = style_part.strip().strip("'\"")
+            return self.kurgu.auto_edit_with_hook(rest, style)
+
         if c.startswith(("zeka ", "orkestra ", "ai ")):
             if not hasattr(self, "neural_conductor") or not self.neural_conductor:
                 return "Neural Conductor etkin değil."
