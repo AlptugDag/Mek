@@ -26,6 +26,12 @@
             <result type="text" description="Temizlik sonucu."/>
         </command>
 
+        <command name="karantina" code="MEKSQRNT" description="Karantinadaki zararlı veya şüpheli öğeleri listeler veya geri yükler.">
+            <cocoa class="MekScriptCommand"/>
+            <direct-parameter type="text" optional="yes" description="İsteğe bağlı alt komut (geri &lt;no&gt; veya boşalt)."/>
+            <result type="text" description="Karantina durumu veya işlem sonucu."/>
+        </command>
+
         <command name="sor" code="MEKSASKA" description="Mek cihaz içi yapay zekasına doğrudan soru sorar.">
             <cocoa class="MekScriptCommand"/>
             <direct-parameter type="text" description="Soru metni."/>

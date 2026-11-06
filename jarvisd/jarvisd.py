@@ -1186,18 +1186,35 @@ class Mek:
             return self.agent.confirm()
         if c in ("iptal", "vazgeç", "vazgec"):
             return self.agent.cancel()
-        if c.startswith(("sor ", "ask ", "derin ")):
-            return self.agent.ask(cmd.split(None, 1)[1] if not c.startswith("derin") else cmd)
-        if c.startswith(("karantina", "karantına")):
-            arg = c.split()[1:]
-            if arg[:1] == ["geri"] and len(arg) > 1 and arg[1].isdigit():
-                return self.security.quarantine_restore(int(arg[1]))
+        if "karantina" in c or "karantına" in c or "neleri karantinaya" in c:
+            if c == "karantina_json":
+                rows = self.security.quarantine_list()
+                import json
+                items = []
+                for i, ts, orig, dest, there in rows:
+                    items.append({
+                        "no": i,
+                        "date": ts,
+                        "original": orig,
+                        "name": os.path.basename(orig),
+                        "dest": dest,
+                        "exists": there
+                    })
+                return json.dumps({"count": len(items), "items": items})
+            arg = c.split()
+            if len(arg) >= 3 and arg[1] in ("geri", "restore") and arg[2].isdigit():
+                return self.security.quarantine_restore(int(arg[2]))
+            if len(arg) >= 2 and arg[1] in ("boşalt", "temizle", "sil"):
+                return self.security.quarantine_clear()
             rows = self.security.quarantine_list()
             if not rows:
-                return "Karantina boş."
-            return "\n".join(f"{i}) {ts}  {orig}  [{'karantinada' if there else 'dosya yok'}]"
-                             for i, ts, orig, _, there in rows) + \
+                return "Karantina tertemiz, hiçbir zararlı veya izole edilmiş öğe yok."
+            lines = [f"{i}) {ts}  {os.path.basename(orig)} ({orig}) [{'karantinada' if there else 'silinmiş'}]"
+                     for i, ts, orig, _, there in rows]
+            return f"Karantinada {len(rows)} öğe var:\n" + "\n".join(lines) + \
                 "\nGeri almak için: mek karantina geri <no>"
+        if c.startswith(("sor ", "ask ", "derin ")):
+            return self.agent.ask(cmd.split(None, 1)[1] if not c.startswith("derin") else cmd)
         if c in ("günlük", "gunluk", "log") or c.startswith(("günlük ", "gunluk ")):
             n = int(re.findall(r"\d+", c)[0]) if re.findall(r"\d+", c) else 20
             keys = ("Asistan", "SAY:", "Arka plana", "park edildi", "tam performansa", "purge", "yetim",
@@ -1274,6 +1291,30 @@ class Mek:
         return ("İzleme listesine eklendi: " if action in ("ekle", "add") else
                 "İzleme listesinden çıkarıldı: ") + ", ".join(symbols)
 
+    def _boot_greeting(self):
+        """Bilgisayar açılır açılmaz / oturum başlar başlamaz gecikmesiz selamlama."""
+        try:
+            time.sleep(1.2)  # Ses ve donanım sürücülerinin hazır olması için kısa tolerans
+            now = dt.datetime.now()
+            today = dt.date.today()
+            greeted = open(self.greet_file).read().strip() if os.path.exists(self.greet_file) else ""
+            if greeted != today.isoformat():
+                open(self.greet_file, "w").write(today.isoformat())
+                greet = "Günaydın" if now.hour < 12 else "Tünaydın" if now.hour < 18 else "İyi akşamlar"
+                msg = f"{greet} {self.T}. Mek hazır."
+                log.info("Açılış anında selamlama yapılıyor: %s", msg)
+                self.speak(msg)
+
+                def send_briefing():
+                    try:
+                        self.notify(self.briefing(), urgent=True)
+                    except Exception:
+                        log.exception("Açılış brifingi hazırlanamadı")
+
+                threading.Thread(target=send_briefing, daemon=True).start()
+        except Exception:
+            log.exception("Açılış selamlaması hatası")
+
     def run(self):
         threading.Thread(target=self.socket_loop, daemon=True).start()
         threading.Thread(target=self.siri_http_loop, daemon=True).start()
@@ -1282,6 +1323,8 @@ class Mek:
                 self.kurgu.gateway.start()
             except Exception as e:
                 log.warning("Mek Premiere Gateway başlatılamadı: %s", e)
+        # Bilgisayar açılır açılmaz anında selamlama (gecikmesiz):
+        threading.Thread(target=self._boot_greeting, daemon=True).start()
         log.info("Mek hazır")
         self.loop()
 

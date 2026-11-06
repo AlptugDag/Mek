@@ -318,6 +318,27 @@ class Security:
             return f"Geri alındı: {orig}. Güvenilir listesine eklendi; yeniden başlatmak sizin kararınız."
         return "Böyle bir karantina kaydı yok."
 
+    def quarantine_clear(self):
+        """Karantinadaki tüm dosyaları ve kayıt kütüğünü güvenle temizler."""
+        count = 0
+        try:
+            if os.path.exists(QUARANTINE):
+                for item in os.listdir(QUARANTINE):
+                    item_path = os.path.join(QUARANTINE, item)
+                    try:
+                        if os.path.isfile(item_path) or os.path.islink(item_path):
+                            os.chmod(item_path, 0o600)
+                            os.unlink(item_path)
+                            count += 1
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                            count += 1
+                    except Exception:
+                        pass
+            return f"Karantina temizlendi ({count} öğe silindi)."
+        except Exception as e:
+            return f"Karantina temizlenirken hata: {e}"
+
     # ------------------------------------------------------------------ kalıcılık
     def audit_persistence(self):
         """Yeni başlangıç öğelerini, kabuk profillerini ve crontab'ı taban çizgisiyle karşılaştırır."""

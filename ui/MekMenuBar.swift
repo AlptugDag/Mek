@@ -77,6 +77,8 @@ public final class MekScriptCommand: NSScriptCommand {
         } else if cmd == "temizle" {
             let derin = evaluatedArguments?["derin"] as? Bool ?? false
             return MekSocketBridge.execute(derin ? "temizle derin" : "temizle")
+        } else if cmd == "karantina" {
+            return MekSocketBridge.execute(direct.isEmpty ? "karantina" : "karantina " + direct)
         } else if cmd == "sor" {
             let query = direct.isEmpty ? (evaluatedArguments?["soru"] as? String ?? "") : direct
             return MekSocketBridge.execute("sor " + query)
@@ -107,18 +109,32 @@ public final class MekScriptCommand: NSScriptCommand {
     }
 }
 
-// MARK: - App Intents & Apple Intelligence Integration (Siri Beta)
+// MARK: - App Intents & Apple Intelligence Integration (Siri)
 
 @available(macOS 13.0, *)
 public struct MekStatusIntent: AppIntent {
     public static var title: LocalizedStringResource = "Mek Durumu"
-    public static var description = IntentDescription("Mek sistem, donanım, fan ve kurgu durumunu bildirir.")
+    public static var description = IntentDescription("Mek sistem, donanım, kalkan ve kurgu durumunu bildirir.")
     public static var openAppWhenRun: Bool = false
 
     public init() {}
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
         let result = MekSocketBridge.execute("durum")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekQuarantineIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Karantina"
+    public static var description = IntentDescription("Mek tarafından karantinaya alınan zararlı ve şüpheli öğeleri listeler.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("karantina")
         return .result(dialog: IntentDialog(stringLiteral: result))
     }
 }
@@ -159,7 +175,7 @@ public struct MekCleanIntent: AppIntent {
 @available(macOS 13.0, *)
 public struct MekAskIntent: AppIntent {
     public static var title: LocalizedStringResource = "Mek'e Sor"
-    public static var description = IntentDescription("Mek cihaz içi Apple Intelligence asistanına soru sorar.")
+    public static var description = IntentDescription("Mek asistanına doğal dille soru sorar.")
     public static var openAppWhenRun: Bool = false
 
     @Parameter(title: "Soru")
@@ -169,90 +185,6 @@ public struct MekAskIntent: AppIntent {
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
         let result = MekSocketBridge.execute("sor " + soru)
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekCreativeModeIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Kurgu Modu"
-    public static var description = IntentDescription("Kurgu uygulamaları için en yüksek performansı açar.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("odak zorla")
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekSilentFanIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Sessiz Fan"
-    public static var description = IntentDescription("Mac Studio fanlarını Akıllı Sessiz kipe alır.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("fan sessiz")
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekKurguStatusIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Kurgu Durumu"
-    public static var description = IntentDescription("Premiere Pro ve DaVinci Resolve aktif kurgu durumunu bildirir.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu durum")
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekKurguOptimizeIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Kurgu Optimizasyonu"
-    public static var description = IntentDescription("Kurgu ortamını en yüksek performans için optimize eder.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu optimize")
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekDaVinciRenderIntent: AppIntent {
-    public static var title: LocalizedStringResource = "DaVinci Render Başlat"
-    public static var description = IntentDescription("DaVinci Resolve Deliver sayfasındaki render kuyruğunu başlatır.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu render")
-        return .result(dialog: IntentDialog(stringLiteral: result))
-    }
-}
-
-@available(macOS 13.0, *)
-public struct MekPremiereExportIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Premiere Dışa Aktar"
-    public static var description = IntentDescription("Premiere Pro sekansını Adobe Media Encoder kuyruğuna gönderir.")
-    public static var openAppWhenRun: Bool = false
-
-    public init() {}
-
-    public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu export")
         return .result(dialog: IntentDialog(stringLiteral: result))
     }
 }
@@ -269,9 +201,9 @@ public struct MekCommandIntent: AppIntent {
     public init() {}
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let cmd = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var cmd = prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if cmd.isEmpty {
-            return .result(dialog: "Mek hazır. Ne yapmamı istersiniz?")
+            cmd = try await $prompt.requestValue("Mek dinliyor, ne yapmamı istersiniz?")
         }
         let result = MekSocketBridge.execute(cmd)
         return .result(dialog: IntentDialog(stringLiteral: result))
@@ -285,10 +217,33 @@ public struct MekShortcuts: AppShortcutsProvider {
             intent: MekCommandIntent(),
             phrases: [
                 "\(.applicationName)",
+                "\(.applicationName)'e sor",
+                "\(.applicationName)'e sor \(\.$prompt)",
+                "\(.applicationName) ile konuş",
                 "\(.applicationName) \(\.$prompt)"
             ],
             shortTitle: "Mek",
             systemImageName: "sparkles"
+        )
+        AppShortcut(
+            intent: MekQuarantineIntent(),
+            phrases: [
+                "\(.applicationName) karantina",
+                "\(.applicationName) karantinada ne var",
+                "\(.applicationName) neleri karantinaya aldın"
+            ],
+            shortTitle: "Mek Karantina",
+            systemImageName: "shield"
+        )
+        AppShortcut(
+            intent: MekStatusIntent(),
+            phrases: [
+                "\(.applicationName) durum",
+                "\(.applicationName) durum nedir",
+                "\(.applicationName) sistem durumu"
+            ],
+            shortTitle: "Mek Durum",
+            systemImageName: "gauge"
         )
     }
 }
@@ -296,17 +251,16 @@ public struct MekShortcuts: AppShortcutsProvider {
 // MARK: - Menu Bar & Application Delegate
 
 @MainActor
-final class MekMenuBar: NSObject, NSApplicationDelegate {
+final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu!
     private var commandInProgress = false
-    private let engine = AVAudioEngine()
-    private var listening = false
     private var appIcon: NSImage?
     private var lastPromptedQuestionId: String? = nil
     private var questionPollTimer: Timer? = nil
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        // Raw Apple Event Suite Handler (MEKS: STAT, BRIF, CLEN, ASKA, ANSW, PROF, FANS)
+        // Raw Apple Event Suite Handler (MEKS: STAT, BRIF, CLEN, QRNT, ASKA, ANSW, PROF, FANS)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleMekAppleEvent(_:withReplyEvent:)),
@@ -314,7 +268,7 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             andEventID: AEEventID(0x2A2A2A2A)      // '****' (typeWildCard)
         )
 
-        // URL Scheme Handler (mek://durum, mek://brifing, mek://temizle, mek://sor?q=...)
+        // URL Scheme Handler (mek://durum, mek://brifing, mek://temizle, mek://karantina, mek://sor?q=...)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
@@ -330,40 +284,160 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         configureStatusButton(suffix: "")
 
-        let menu = NSMenu()
-        add("Brifing", to: menu, action: #selector(runBriefing))
-        add("Sistem durumu", to: menu, action: #selector(runStatus))
-        add("Bellek bütçesi", to: menu, action: #selector(runMemory))
-        add("Ultra-Scratch (400 GB/s RAM Disk)", to: menu, action: #selector(runRamDisk))
-        add("Proje Zaman Makinesi (APFS Klon)", to: menu, action: #selector(runTimeMachine))
-        add("Termal & Fan (Akıllı Sessiz Kip)", to: menu, action: #selector(runFanSilent))
-        add("Piyasa izleme listesi", to: menu, action: #selector(runWatchlist))
-        add("Güç durumu", to: menu, action: #selector(runPower))
-        add("Güvenlik özeti", to: menu, action: #selector(runSecurity))
-        menu.addItem(.separator())
-        let kurguItem = NSMenuItem(title: "🎬 Video Kurgu (Apple Intelligence)", action: nil, keyEquivalent: "")
-        let kurguSubMenu = NSMenu()
-        add("Kurgu Durumu (Premiere / DaVinci)", to: kurguSubMenu, action: #selector(runKurguStatus))
-        add("Kurgu Ortamını Optimize Et (P-Core + RAM-disk)", to: kurguSubMenu, action: #selector(runKurguOptimize))
-        add("DaVinci Render Kuyruğunu Başlat", to: kurguSubMenu, action: #selector(runDaVinciRender))
-        add("Premiere Sekansını Media Encoder'a Aktar", to: kurguSubMenu, action: #selector(runPremiereExport))
-        kurguSubMenu.addItem(.separator())
-        add("Film Rengi Yap (Matrix, Oppenheimer, Dune…)", to: kurguSubMenu, action: #selector(runPromptFilmColor))
-        add("Efekt Sentezle (Doğal Dil ile Efekt)", to: kurguSubMenu, action: #selector(runPromptEffect))
-        add("Otonom Kaba Kurgu (FCPXML / EDL)", to: kurguSubMenu, action: #selector(runPromptRoughCut))
-        kurguItem.submenu = kurguSubMenu
-        menu.addItem(kurguItem)
-        menu.addItem(.separator())
-        add("Mek'e sor veya komut ver…", to: menu, action: #selector(promptForCommand))
-        add("Sesle sor (8 sn dinler)", to: menu, action: #selector(askByVoice))
-        add("Komut yardımı", to: menu, action: #selector(runHelp))
-        menu.addItem(.separator())
-        add("Mek'i kapat", to: menu, action: #selector(quit))
-        statusItem.menu = menu
+        statusMenu = NSMenu()
+        statusMenu.delegate = self
+        statusItem.menu = statusMenu
+
+        // App Shortcuts ve Siri entegrasyonunu macOS sistemine bildir
+        if #available(macOS 13.0, *) {
+            MekShortcuts.updateAppShortcutParameters()
+        }
 
         startWorkspaceObserver()
         startQuestionPolling()
     }
+
+    // MARK: - Dynamic Quarantine Menu (Kullanıcı Tıkladığında Canlı Listeleme)
+
+    func menuWillOpen(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // 1. Durum Başlığı
+        let headerItem = NSMenuItem(title: "🛡️ Mek Kalkanı: Aktif (Sistem Korunuyor)", action: nil, keyEquivalent: "")
+        headerItem.isEnabled = false
+        menu.addItem(headerItem)
+
+        menu.addItem(.separator())
+
+        // 2. Karantina Bölümü
+        let qSectionHeader = NSMenuItem(title: "KARANTİNAYA ALINAN ÖĞELER", action: nil, keyEquivalent: "")
+        qSectionHeader.isEnabled = false
+        menu.addItem(qSectionHeader)
+
+        let rawJson = MekSocketBridge.execute("karantina_json")
+        var itemsCount = 0
+
+        if let data = rawJson.data(using: .utf8),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let items = obj["items"] as? [[String: Any]] {
+            itemsCount = items.count
+            if items.isEmpty {
+                let cleanItem = NSMenuItem(title: "  ✓ Karantina Temiz (0 Şüpheli Dosya)", action: nil, keyEquivalent: "")
+                cleanItem.isEnabled = false
+                menu.addItem(cleanItem)
+            } else {
+                for item in items {
+                    let no = item["no"] as? Int ?? 1
+                    let name = item["name"] as? String ?? "Bilinmeyen Dosya"
+                    let date = item["date"] as? String ?? ""
+                    let orig = item["original"] as? String ?? ""
+                    let dest = item["dest"] as? String ?? ""
+
+                    let itemTitle = "  ⚠️ \(no)) \(name) (\(date))"
+                    let mItem = NSMenuItem(title: itemTitle, action: nil, keyEquivalent: "")
+
+                    let sub = NSMenu()
+
+                    let origItem = NSMenuItem(title: "Orijinal Konum: \(orig)", action: nil, keyEquivalent: "")
+                    origItem.isEnabled = false
+                    sub.addItem(origItem)
+
+                    sub.addItem(.separator())
+
+                    let restoreItem = NSMenuItem(title: "Geri Yükle (Karantinadan Çıkar)", action: #selector(restoreQuarantineItem(_:)), keyEquivalent: "")
+                    restoreItem.target = self
+                    restoreItem.tag = no
+                    sub.addItem(restoreItem)
+
+                    let revealItem = NSMenuItem(title: "Karantinadaki Dosyayı Finder'da Göster", action: #selector(revealQuarantineItem(_:)), keyEquivalent: "")
+                    revealItem.target = self
+                    revealItem.representedObject = dest
+                    sub.addItem(revealItem)
+
+                    mItem.submenu = sub
+                    menu.addItem(mItem)
+                }
+            }
+        } else {
+            let cleanItem = NSMenuItem(title: "  ✓ Karantina Temiz (Tehdit Yok)", action: nil, keyEquivalent: "")
+            cleanItem.isEnabled = false
+            menu.addItem(cleanItem)
+        }
+
+        menu.addItem(.separator())
+
+        // 3. Karantina Klasör Eylemleri
+        let openFolderItem = NSMenuItem(title: "📂 Karantina Klasörünü Aç...", action: #selector(openQuarantineFolder), keyEquivalent: "")
+        openFolderItem.target = self
+        menu.addItem(openFolderItem)
+
+        if itemsCount > 0 {
+            let clearItem = NSMenuItem(title: "🗑️ Karantinayı Boşalt...", action: #selector(clearQuarantine), keyEquivalent: "")
+            clearItem.target = self
+            menu.addItem(clearItem)
+        }
+
+        menu.addItem(.separator())
+
+        // 4. Siri Entegrasyonu Rehberi
+        let siriItem = NSMenuItem(title: "🎙️ Siri: \"Hey Siri, Mek\"", action: #selector(siriGuide), keyEquivalent: "")
+        siriItem.target = self
+        menu.addItem(siriItem)
+
+        menu.addItem(.separator())
+
+        // 5. Çıkış
+        let quitItem = NSMenuItem(title: "Mek'i Kapat", action: #selector(quit), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+    }
+
+    @objc private func restoreQuarantineItem(_ sender: NSMenuItem) {
+        let no = sender.tag
+        let res = MekSocketBridge.execute("karantina geri \(no)")
+        showResult(res)
+    }
+
+    @objc private func revealQuarantineItem(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String, !path.isEmpty else { return }
+        NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+    }
+
+    @objc private func openQuarantineFolder() {
+        let qPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".jarvis/karantina").path
+        NSWorkspace.shared.open(URL(fileURLWithPath: qPath))
+    }
+
+    @objc private func clearQuarantine() {
+        let alert = makeAlert()
+        alert.messageText = "Karantinayı Boşalt"
+        alert.informativeText = "Karantinadaki tüm şüpheli dosyalar kalıcı olarak silinecek. Onaylıyor musunuz?"
+        alert.addButton(withTitle: "Evet, Boşalt")
+        alert.addButton(withTitle: "Vazgeç")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let res = MekSocketBridge.execute("karantina temizle")
+        showResult(res)
+    }
+
+    @objc private func siriGuide() {
+        let alert = makeAlert()
+        alert.messageText = "Mek Siri & Ses Entegrasyonu"
+        alert.informativeText = """
+        Mek ile tamamen Siri üzerinden iletişime geçebilirsiniz.
+
+        Örnek sesli komutlar:
+        • "Hey Siri, Mek"
+        • "Hey Siri, Mek'e sor sistem durumu nedir?"
+        • "Hey Siri, Mek karantinada ne var?"
+        • "Hey Siri, Mek kurgu modunu aç"
+        • "Hey Siri, Mek temizlik yap"
+        """
+        alert.addButton(withTitle: "Anladım")
+        alert.runModal()
+    }
+
+    // MARK: - Apple Event & URL Scheme
 
     @objc private func handleMekAppleEvent(_ event: NSAppleEventDescriptor, withReplyEvent replyEvent: NSAppleEventDescriptor) {
         let eventID = event.eventID
@@ -378,8 +452,11 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             }
             return
         } else if eventID == 0x434C454E { // CLEN: temizle
-            let derin = event.paramDescriptor(forKeyword: 0x70444552)?.booleanValue ?? false // pDER
+            let derin = event.paramDescriptor(forKeyword: 0x70444552)?.booleanValue ?? false
             cmd = derin ? "temizle derin" : "temizle"
+        } else if eventID == 0x51524E54 { // QRNT: karantina
+            let direct = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
+            cmd = direct.isEmpty ? "karantina" : "karantina " + direct
         } else if eventID == 0x41534B41 { // ASKA: sor
             let q = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
             cmd = "sor " + q
@@ -390,26 +467,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
             cmd = "odak zorla"
         } else if eventID == 0x46414E53 { // FANS: fanSessiz
             cmd = "fan sessiz"
-        } else if eventID == 0x4B524731 { // KRG1: kurgu
-            cmd = "kurgu durum"
-        } else if eventID == 0x4B52474F { // KRGO: kurguOptimize
-            cmd = "kurgu optimize"
-        } else if eventID == 0x4456524E { // DVRN: davinciRender
-            cmd = "kurgu render"
-        } else if eventID == 0x504D4558 { // PMEX: premiereExport
-            cmd = "kurgu export"
-        } else if eventID == 0x4B524753 { // KRGS: kurguSessizlik
-            let file = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
-            cmd = "kurgu sessizlik " + file
-        } else if eventID == 0x524E4B31 { // RNK1: kurguRenk
-            let f = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? "matrix"
-            cmd = "kurgu renk " + f
-        } else if eventID == 0x45465831 { // EFX1: kurguEfekt
-            let e = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
-            cmd = "kurgu efekt " + e
-        } else if eventID == 0x4B424131 { // KBA1: kurguKaba
-            let k = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
-            cmd = "kurgu kaba " + k
         }
 
         let result = MekSocketBridge.execute(cmd)
@@ -464,7 +521,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         button.title = suffix.isEmpty ? "Mek" : "Mek \(suffix)"
     }
 
-    /// Ön plandaki uygulama değiştiğinde (<15 ms) doğrudan Unix soketi üzerinden Mek servisine haber verir.
     private func startWorkspaceObserver() {
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] note in
@@ -526,176 +582,12 @@ final class MekMenuBar: NSObject, NSApplicationDelegate {
         let responseIdx = alert.runModal().rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
         if responseIdx >= 0 && responseIdx < options.count {
             let key = options[responseIdx]["key"] ?? ""
-            send("cevap " + key)
+            _ = MekSocketBridge.execute("cevap " + key)
         }
-    }
-
-    private func add(_ title: String, to menu: NSMenu, action: Selector) {
-        let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
-    }
-
-    @objc private func runBriefing() { send("brifing") }
-    @objc private func runStatus() { send("durum") }
-    @objc private func runMemory() { send("bellek") }
-    @objc private func runRamDisk() { send("ramdisk") }
-    @objc private func runTimeMachine() { send("zamanmakinesi") }
-    @objc private func runFanSilent() { send("fan sessiz") }
-    @objc private func runWatchlist() { send("izleme") }
-    @objc private func runPower() { send("güç") }
-    @objc private func runSecurity() { send("güvenlik") }
-    @objc private func runHelp() { send("yardım") }
-    @objc private func runKurguStatus() { send("kurgu durum") }
-    @objc private func runKurguOptimize() { send("kurgu optimize") }
-    @objc private func runDaVinciRender() { send("kurgu render") }
-    @objc private func runPremiereExport() { send("kurgu export") }
-
-    @objc private func runPromptFilmColor() {
-        let alert = makeAlert()
-        alert.messageText = "Film Rengi Yap (Apple Intelligence)"
-        alert.informativeText = "Hangi filmin renk paletini 3D LUT olarak üretmek istersiniz? (Örnek: Matrix, Blade Runner 2049, Oppenheimer, Amélie, Dune, Seven, Wes Anderson)"
-        alert.addButton(withTitle: "Üret ve Uygula")
-        alert.addButton(withTitle: "Vazgeç")
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        input.placeholderString = "Film adı (örn: Matrix)"
-        alert.accessoryView = input
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !val.isEmpty { send("kurgu renk " + val) }
-    }
-
-    @objc private func runPromptEffect() {
-        let alert = makeAlert()
-        alert.messageText = "Sinematik Efekt Sentezle (Apple Intelligence)"
-        alert.informativeText = "İstediğiniz görsel efekti ve atmosferi doğal dille tarif edin:"
-        alert.addButton(withTitle: "Sentezle")
-        alert.addButton(withTitle: "Vazgeç")
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        input.placeholderString = "Örnek: rüya gibi yumuşak parıltı, nostaljik soluk renkler ve gren"
-        alert.accessoryView = input
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !val.isEmpty { send("kurgu efekt " + val) }
-    }
-
-    @objc private func runPromptRoughCut() {
-        let alert = makeAlert()
-        alert.messageText = "Otonom Kaba Kurgu (FCPXML / EDL)"
-        alert.informativeText = "Kaba kurgusu yapılacak video/ses dosyasının veya klasörünün tam yolunu girin:"
-        alert.addButton(withTitle: "Kaba Kurgu Yap")
-        alert.addButton(withTitle: "Vazgeç")
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        input.placeholderString = "/Users/.../roportaj.wav veya klasör"
-        alert.accessoryView = input
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let val = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !val.isEmpty { send("kurgu kaba " + val) }
-    }
-
-    @objc private func promptForCommand() {
-        let alert = makeAlert()
-        alert.messageText = "Mek'e sorun veya komut verin"
-        alert.informativeText = "Örnek: bilgisayar neden yavaş? · temizle · derin: bu hafta ne yaptın?"
-        alert.addButton(withTitle: "Gönder")
-        alert.addButton(withTitle: "Vazgeç")
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        input.placeholderString = "Serbest soru ya da komut"
-        alert.accessoryView = input
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let command = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return }
-        send(command)
-    }
-
-    @objc private func askByVoice() {
-        guard !listening else { return }
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            DispatchQueue.main.async {
-                guard status == .authorized else {
-                    self?.showResult("Konuşma tanıma izni verilmedi (Sistem Ayarları > Gizlilik).")
-                    return
-                }
-                self?.startListening()
-            }
-        }
-    }
-
-    private func startListening() {
-        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "tr-TR")), recognizer.isAvailable else {
-            showResult("Türkçe konuşma tanıma şu an kullanılamıyor.")
-            return
-        }
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        if recognizer.supportsOnDeviceRecognition { request.requiresOnDeviceRecognition = true }
-        let input = engine.inputNode
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
-            request.append(buffer)
-        }
-        engine.prepare()
-        do { try engine.start() } catch {
-            showResult("Mikrofon açılamadı: \(error.localizedDescription)")
-            return
-        }
-        listening = true
-        configureStatusButton(suffix: "🎙")
-        var finished = false
-        let finish: (String?) -> Void = { [weak self] text in
-            guard let self = self, !finished else { return }
-            finished = true
-            self.engine.stop()
-            self.engine.inputNode.removeTap(onBus: 0)
-            request.endAudio()
-            self.listening = false
-            self.configureStatusButton(suffix: "")
-            if let text = text, !text.isEmpty { self.send(text, spoken: true) }
-        }
-        var best = ""
-        recognizer.recognitionTask(with: request) { result, error in
-            if let result = result { best = result.bestTranscription.formattedString }
-            if (result?.isFinal ?? false) || error != nil { DispatchQueue.main.async { finish(best) } }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { finish(best) }
     }
 
     @objc private func quit() {
         NSApp.terminate(nil)
-    }
-
-    private func send(_ command: String, spoken: Bool = false) {
-        guard !commandInProgress else {
-            showResult("Mek önceki komutu tamamlıyor; lütfen birkaç saniye sonra yeniden deneyin.")
-            return
-        }
-        commandInProgress = true
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = MekSocketBridge.execute(command)
-
-            DispatchQueue.main.async {
-                self?.commandInProgress = false
-                if command.hasPrefix("söyle ") {
-                    return
-                } else if result.contains("`mek onay`") {
-                    self?.askConfirmation(result)
-                } else {
-                    self?.showResult(result)
-                    if spoken { self?.send("söyle " + result) }
-                }
-            }
-        }
-    }
-
-    private func askConfirmation(_ text: String) {
-        let alert = makeAlert()
-        alert.messageText = "Mek onayınızı istiyor"
-        alert.informativeText = text.replacingOccurrences(of: " Onaylamak için `mek onay`, vazgeçmek için `mek iptal` yazın.", with: "")
-        alert.addButton(withTitle: "Onayla")
-        alert.addButton(withTitle: "Vazgeç")
-        send(alert.runModal() == .alertFirstButtonReturn ? "onay" : "iptal")
     }
 
     private func showResult(_ text: String) {

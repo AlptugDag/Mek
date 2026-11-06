@@ -8,8 +8,8 @@ PYTHON="$HOME/.jarvis/venv/bin/python"
 [ -x "$PYTHON" ] || PYTHON="python3"
 
 echo "Mek Siri Kestirmesi oluşturuluyor..."
+RAW_PATH="/tmp/Mek_raw.shortcut"
 SHORTCUT_PATH="/tmp/Mek.shortcut"
-SIGNED_PATH="/tmp/Mek_Siri.shortcut"
 
 "$PYTHON" - <<'EOF'
 import plistlib, uuid
@@ -76,16 +76,15 @@ shortcut_data = {
     ]
 }
 
-with open("/tmp/Mek.shortcut", "wb") as f:
+with open("/tmp/Mek_raw.shortcut", "wb") as f:
     plistlib.dump(shortcut_data, f, fmt=plistlib.FMT_BINARY)
 EOF
 
 if command -v shortcuts >/dev/null 2>&1; then
-    shortcuts sign --mode people-who-know-me --input "$SHORTCUT_PATH" --output "$SIGNED_PATH" 2>/dev/null || cp "$SHORTCUT_PATH" "$SIGNED_PATH"
-    echo "Kestirmeler uygulaması açılıyor; 'Kestirmeyi Ekle'ye tıklayarak 'Mek' kestirmesini kaydedin."
-    open "$SIGNED_PATH"
-else
+    shortcuts sign --mode people-who-know-me --input "$RAW_PATH" --output "$SHORTCUT_PATH" 2>/dev/null || cp "$RAW_PATH" "$SHORTCUT_PATH"
     open "$SHORTCUT_PATH"
+else
+    open "$RAW_PATH"
 fi
 
 echo "Kurulum hazır! Artık Siri'ye 'Hey Siri, Mek' diyerek Mek'i doğrudan sesle yönetebilirsiniz."
