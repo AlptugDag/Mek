@@ -24,7 +24,6 @@ import time
 import psutil
 
 from config import (
-    CLEANER,
     CREATIVE_BUNDLE_PATTERN,
     MASTER_SETUP,
     PLUGIN_SERVICE_AGENTS,
@@ -232,7 +231,6 @@ class ServiceManager:
         self.last_adobe_seen = time.time()
         self.last_purge = 0.0
         self.last_front_pro = None
-        self.cleaner_stamp = os.path.join(STATE_DIR, "cleaner_last")
         self.prewarmer = PreWarmer()
         self.ultra_scratch = UltraScratchManager()
         self.timemachine = ProjectTimeMachine()
@@ -577,17 +575,7 @@ class ServiceManager:
             self.enter_normal()
 
     # --- bakım -----------------------------------------------------------------
-    def cleaner_due(self):
-        try:
-            last = os.path.getmtime(self.cleaner_stamp)
-        except OSError:
-            return True
-        return time.time() - last > self.cfg["cleaner_min_gap_h"] * 3600
-
-    def run_cleaner(self, busy=False):
-        """busy: kurgu/render sürüyorsa temizlik yapılmaz."""
-        if busy or not os.access(CLEANER, os.X_OK):
-            return False
-        open(self.cleaner_stamp, "w").close()
-        proc = subprocess.Popen([CLEANER, "--auto"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return proc
+    # Not: Buradaki eski `cleaner_due`/`run_cleaner` çifti kaldırıldı. İkisini de
+    # kimse çağırmıyordu ve depoda bulunmayan ~/.local/bin/smart_system_cleaner.sh
+    # dosyasına bağlıydılar; temiz bir kuruluma o dosya hiç gelmiyordu. Gerçek
+    # temizliği jarvisd/cleaner.py yapıyor (bkz. Mek.clean_now).

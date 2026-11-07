@@ -14,6 +14,10 @@ import re
 import logging
 from typing import Dict, List, Any, Optional, Tuple
 
+import config
+import proc
+
+
 log = logging.getLogger("mek.kurgu")
 
 DAVINCI_SCRIPT_PATH = "/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting/Modules"
@@ -205,7 +209,10 @@ tell application "System Events"
 end tell
 '''
         try:
-            subprocess.run(["osascript", "-e", script], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            r = proc.quiet(["osascript", "-e", script], timeout=30)
+            if r.returncode == proc.TIMEOUT_RETURNCODE:
+                return ("Premiere Pro 30 saniye içinde yanıt vermedi; açık bir iletişim "
+                        "kutusu olabilir. Premiere'i kontrol edip tekrar deneyin.")
             return "Premiere Pro sekansı Adobe Media Encoder kuyruğuna aktarılıyor."
         except Exception as e:
             return f"Dışa aktarma hatası: {e}"
@@ -349,19 +356,18 @@ end tell
     def set_gemini_key(self, api_key: str) -> str:
         """Gemini API anahtarını kaydeder ve viral hook motorunu günceller."""
         k = api_key.strip()
+        if not k:
+            return "Boş bir API anahtarı kaydedilemez."
         self.viral_hook.gemini_api_key = k
         try:
-            cfg_path = os.path.join(os.path.expanduser("~/.jarvis"), "config.json")
-            data = {}
-            if os.path.exists(cfg_path):
-                try:
-                    with open(cfg_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                except Exception:
-                    pass
-            data["gemini_api_key"] = k
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+            # Anahtar, motorun okuduğu tek yere (jarvis.json) atomik yazılır.
+            # Eskiden config.json'a yazılıyor ama jarvis.json'dan okunuyordu;
+            # bu yüzden anahtar her yeniden başlatmada kayboluyordu.
+            config.set_values(gemini_api_key=k)
+            try:
+                os.chmod(config.CONFIG_FILE, 0o600)
+            except OSError:
+                pass
             return "Gemini API anahtarı başarıyla kaydedildi. Yapay zeka destekli viral kanca motoru aktif."
         except Exception as e:
             return f"API anahtarı hafızaya alındı fakat dosyaya yazılamadı: {e}"

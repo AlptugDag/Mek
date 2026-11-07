@@ -26,7 +26,6 @@ import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(1, os.path.expanduser("~/.jarvis"))  # legacy ses/hava durumu modülü
 import apple
 import activity_monitor
 import adblock
@@ -45,10 +44,43 @@ from memory_budget import MemoryBudget
 from questions import QuestionBox, Question, Option, ai_classifier
 from kurgu import KurguManager
 from neural_conductor import NeuralConductor
+import proc as proc_mod
+
 
 log = logging.getLogger("mek")
 PY = os.path.join(config.MEK_HOME, "venv/bin/python")
 SPEAK = os.path.join(config.MEK_HOME, "jarvis.py")
+
+# jarvis.py (ses/hava durumu yardımcıları) jarvisd paketinin kardeşidir.
+# Eskiden ~/.jarvis doğrudan sys.path'e ekleniyordu; bu, depodan çalışan
+# testlerin ve araçların kurulu (eski) kopyayı yüklemesine yol açıyordu.
+# Artık modül yalnızca ihtiyaç anında, açık dosya yolundan yüklenir.
+_LEGACY_PATHS = (
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "jarvis.py"),
+    os.path.join(config.MEK_HOME, "jarvis.py"),
+)
+_legacy_cache = []
+
+
+def legacy_module():
+    """jarvis.py'yi sys.path'i kirletmeden yükler; bulunamazsa None döner."""
+    if _legacy_cache:
+        return _legacy_cache[0]
+    import importlib.util
+    for path in _LEGACY_PATHS:
+        if not os.path.isfile(path):
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("mek_legacy", path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        except Exception as e:
+            log.warning("Eski jarvis.py yüklenemedi (%s): %s", path, e)
+            continue
+        _legacy_cache.append(mod)
+        return mod
+    _legacy_cache.append(None)
+    return None
 EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
 
 
@@ -290,12 +322,12 @@ class Mek:
         facts = [f"Saat {now:%H:%M}, {now.day} {apple.MONTHS[now.month - 1]} "
                  f"{apple.DAYS[now.weekday()]}."]
         try:
-            import jarvis as legacy
-            w = legacy.get_weather(timeout=4)
+            legacy = legacy_module()
+            w = legacy.get_weather(timeout=4) if legacy else None
             if w:
                 facts.append(w)
         except Exception:
-            pass
+            log.debug("Hava durumu alınamadı", exc_info=True)
         try:
             evs = self.cal.events(now, dt.datetime.combine(now.date(), dt.time(23, 59)))
             if evs is None:
@@ -672,10 +704,12 @@ class Mek:
 
         def run():
             try:
-                proc = subprocess.Popen([PY, os.path.join(os.path.dirname(__file__), "cleaner.py"), "--tier", tier],
-                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-                subprocess.run(["/usr/sbin/taskpolicy", "-b", "-p", str(proc.pid)], capture_output=True)
-                out, _ = proc.communicate(timeout=3600)
+                out, timed_out = proc_mod.capture_background(
+                    [PY, os.path.join(os.path.dirname(__file__), "cleaner.py"), "--tier", tier],
+                    timeout=3600)
+                if timed_out or not out.strip():
+                    log.warning("Temizlik tamamlanamadı (tier=%s)", tier)
+                    return
                 r = json.loads(out.strip().splitlines()[-1])
                 self.events.publish("maintenance.cleaner.completed", tier=tier, result=r)
             except Exception as e:
@@ -721,7 +755,8 @@ class Mek:
             qid = f"relief_{app_name.lower()}"
 
             def do_quit():
-                subprocess.run(["osascript", "-e", f'tell application "{app_name}" to quit'], capture_output=True)
+                proc_mod.run(["osascript", "-e", f'tell application "{app_name}" to quit'],
+                         capture_output=True, timeout=20)
                 return f"{app_name} uygulamasına kapanma isteği iletildi; bellek boşalacak."
 
             q = Question(
@@ -814,74 +849,87 @@ class Mek:
             time.sleep(max(1, gap - (time.time() - t0)))
 
     def socket_loop(self):
-        """Terminal / Kestirmeler için Mek komutlarını işler."""
+        """Terminal, menü çubuğu ve Siri (App Intents) komutlarını işler."""
         try:
             os.unlink(config.SOCKET_PATH)
         except FileNotFoundError:
             pass
         srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(config.SOCKET_PATH)
-        os.chmod(config.SOCKET_PATH, 0o600)
-        srv.listen(4)
-        while self.running:
-            try:
-                conn, _ = srv.accept()
-                conn.settimeout(180)
-                with conn:
-                    cmd = conn.recv(1024).decode("utf-8", "ignore").strip()
-                    reply = self.command(cmd)
-                    if not cmd.lower().startswith("odak "):
-                        conn.sendall((reply or "ok").encode())
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            except Exception as e:
-                log.warning("Soket: %s", e)
-
-    def siri_http_loop(self):
-        """Siri ve macOS Kestirmeler için yerel HTTP köprüsü."""
-        from http.server import HTTPServer, BaseHTTPRequestHandler
-        from urllib.parse import urlparse, parse_qs
-        mek = self
-
-        class SiriHandler(BaseHTTPRequestHandler):
-            def log_message(self, format, *args):
-                pass  # Sessiz
-
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                qs = parse_qs(parsed.query)
-                q = (qs.get("q", [""])[0] or qs.get("soru", [""])[0] or qs.get("text", [""])[0]).strip()
-
-                if mek.questions.pending() and q:
-                    handled, reply = mek.questions.answer(q)
-                    if handled:
-                        mek.speak(reply)
-                        self._reply(reply)
-                        return
-                elif mek.questions.pending() and not q:
-                    pending = mek.questions.pending()
-                    self._reply(f"{pending.text} {pending.choices_text()}.")
-                    return
-
-                if not q:
-                    reply = f"Mek hazır. Sistem durumu: {mek.command('durum')}"
-                else:
-                    reply = mek.command(q)
-                self._reply(reply)
-
-            def _reply(self, text):
-                self.send_response(200)
-                self.send_header("Content-Type", "text/plain; charset=utf-8")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write((text or "").encode("utf-8"))
-
         try:
-            httpd = HTTPServer(("127.0.0.1", config.SIRI_PORT), SiriHandler)
-            httpd.serve_forever()
-        except Exception as e:
-            log.warning("Siri HTTP sunucusu başlatılamadı (port %s): %s", config.SIRI_PORT, e)
+            srv.bind(config.SOCKET_PATH)
+            os.chmod(config.SOCKET_PATH, 0o600)
+            srv.listen(16)
+            # accept() üzerinde zaman aşımı olmadan `while self.running`
+            # koşulu hiç yeniden değerlendirilemiyordu; servis düzgün
+            # kapanamıyordu.
+            srv.settimeout(1.0)
+            while self.running:
+                try:
+                    conn, _ = srv.accept()
+                except socket.timeout:
+                    continue
+                except OSError as e:
+                    if self.running:
+                        log.warning("Soket kabul edilemedi: %s", e)
+                    continue
+                try:
+                    conn.settimeout(180)
+                    with conn:
+                        cmd = self._read_command(conn)
+                        if not cmd:
+                            continue
+                        try:
+                            reply = self.command(cmd)
+                        except Exception:
+                            # Eskiden istisna dış döngüye düşüyor, istemciye
+                            # hiç yanıt gitmiyor ve `mek ...` 180 sn donuyordu.
+                            log.exception("Komut başarısız: %s", cmd[:120])
+                            reply = ("Komutu işlerken bir hata oluştu; ayrıntı için "
+                                     "`mek log` çıktısına bakın.")
+                        if not cmd.lower().startswith("odak "):
+                            conn.sendall((reply or "ok").encode("utf-8"))
+                except (BrokenPipeError, ConnectionResetError, socket.timeout):
+                    pass
+                except Exception as e:
+                    log.warning("Soket: %s", e)
+        finally:
+            srv.close()
+            try:
+                os.unlink(config.SOCKET_PATH)
+            except OSError:
+                pass
 
+    @staticmethod
+    def _read_command(conn, limit=64 * 1024):
+        """Komutu satır sonuna ya da bağlantı kapanana kadar okur.
+
+        Tek bir ``recv(1024)`` çağrısı uzun komutları (ör. `kurgu kaba <uzun
+        dosya yolu>`) sessizce kesiyor ve akışın parçalı gelmesi hâlinde
+        eksik komut işliyordu.
+        """
+        chunks = []
+        total = 0
+        while total < limit:
+            try:
+                chunk = conn.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if b"\n" in chunk:
+                break
+        return b"".join(chunks).decode("utf-8", "ignore").strip()
+
+    # Not: Eski `siri_http_loop` (127.0.0.1:45728) kaldırıldı.
+    #
+    # Yalnızca Kestirmeler tabanlı Siri köprüsü için vardı ve kimlik
+    # doğrulaması olmayan bir GET isteğiyle İSTEDİĞİ Mek komutunu
+    # çalıştırıyordu; üstelik "Access-Control-Allow-Origin: *" gönderdiği
+    # için ziyaret edilen herhangi bir web sayfası bile bu uç noktayı
+    # çağırıp yanıtı okuyabiliyordu. Siri artık App Intents üzerinden
+    # doğrudan Unix soketine bağlanıyor (bkz. ui/MekMenuBar.swift).
     def command(self, cmd):
         c = cmd.lower().strip()
         if c.startswith("odak "):
@@ -1317,7 +1365,6 @@ class Mek:
 
     def run(self):
         threading.Thread(target=self.socket_loop, daemon=True).start()
-        threading.Thread(target=self.siri_http_loop, daemon=True).start()
         if hasattr(self, "kurgu") and self.kurgu and hasattr(self.kurgu, "gateway"):
             try:
                 self.kurgu.gateway.start()

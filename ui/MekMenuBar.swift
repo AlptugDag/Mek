@@ -8,6 +8,10 @@ import Speech
 // MARK: - Native Darwin Socket Bridge
 
 public enum MekSocketBridge {
+    /// Siri bir intent'i çalıştırırken uzun süre bekleyemez; 25 saniye
+    /// Siri'nin kendi sınırının altında kalır ama ağır komutlara da yeter.
+    private static let timeoutSeconds: Int = 25
+
     public static func execute(_ command: String) -> String {
         let socketPath = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".jarvis/jarvis.sock").path
@@ -15,9 +19,13 @@ public enum MekSocketBridge {
         guard fd >= 0 else { return "Mek: Soket açılamadı." }
         defer { Darwin.close(fd) }
 
-        var tv = timeval(tv_sec: 15, tv_usec: 0)
+        var tv = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        // Karşı taraf soketi kapattığında write() SIGPIPE ile süreci
+        // öldürmesin; hata olarak EPIPE dönsün.
+        var one: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -36,25 +44,43 @@ public enum MekSocketBridge {
             }
         }
         guard connected == 0 else {
-            return "Mek arka plan servisine bağlanılamadı. Servis aktif mi?"
+            return "Mek arka plan servisine bağlanılamadı. Servis aktif mi? "
+                 + "Terminalde kontrol: launchctl list | grep com.alptug.jarvis"
         }
 
         let payload = Array((command.trimmingCharacters(in: .whitespacesAndNewlines) + "\n").utf8)
-        let written = payload.withUnsafeBytes { buf in
-            Darwin.write(fd, buf.baseAddress, buf.count)
+        // write() kısmi yazabilir; tamamı gidene kadar döngüde kal.
+        var sent = 0
+        while sent < payload.count {
+            let n = payload.withUnsafeBytes { buf -> Int in
+                Darwin.write(fd, buf.baseAddress!.advanced(by: sent), payload.count - sent)
+            }
+            if n > 0 {
+                sent += n
+            } else if n < 0 && errno == EINTR {
+                continue
+            } else {
+                return "Mek: Komut servise yazılamadı."
+            }
         }
-        guard written == payload.count else {
-            return "Mek: Komut servise yazılamadı."
-        }
+        // Yazma yönünü kapat: Python tarafı recv() ile EOF görüp komutun
+        // bittiğini anlar (bin/jarvis'teki `nc -U` ile aynı davranış).
+        shutdown(fd, SHUT_WR)
 
         var responseData = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
             let count = Darwin.read(fd, &buffer, buffer.count)
-            if count <= 0 { break }
-            responseData.append(buffer, count: count)
+            if count > 0 {
+                responseData.append(buffer, count: count)
+            } else if count < 0 && errno == EINTR {
+                continue
+            } else {
+                break
+            }
         }
-        let response = String(data: responseData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let response = String(data: responseData, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         return (response?.isEmpty == false) ? response! : "İşlem tamamlandı."
     }
 }
@@ -211,6 +237,34 @@ public struct MekCommandIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
+public struct MekEditingModeIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Kurgu Modu"
+    public static var description = IntentDescription("Kurgu yazılımları için tam performans modunu etkinleştirir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu optimize")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekEditingStatusIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Kurgu Durumu"
+    public static var description = IntentDescription("Premiere Pro ve DaVinci Resolve aktif proje durumunu bildirir.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("kurgu durum")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
 public struct MekShortcuts: AppShortcutsProvider {
     public static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -244,6 +298,46 @@ public struct MekShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Mek Durum",
             systemImageName: "gauge"
+        )
+        AppShortcut(
+            intent: MekBriefingIntent(),
+            phrases: [
+                "\(.applicationName) brifing",
+                "\(.applicationName) brifingi ver",
+                "\(.applicationName) günün brifingi"
+            ],
+            shortTitle: "Mek Brifing",
+            systemImageName: "sun.horizon"
+        )
+        AppShortcut(
+            intent: MekCleanIntent(),
+            phrases: [
+                "\(.applicationName) temizlik",
+                "\(.applicationName) temizlik yap",
+                "\(.applicationName) belleği rahatlat"
+            ],
+            shortTitle: "Mek Temizlik",
+            systemImageName: "sparkle"
+        )
+        AppShortcut(
+            intent: MekEditingModeIntent(),
+            phrases: [
+                "\(.applicationName) kurgu modu",
+                "\(.applicationName) kurgu modunu aç",
+                "\(.applicationName) kurguya hazırlan"
+            ],
+            shortTitle: "Mek Kurgu Modu",
+            systemImageName: "film"
+        )
+        AppShortcut(
+            intent: MekEditingStatusIntent(),
+            phrases: [
+                "\(.applicationName) kurgu durumu",
+                "\(.applicationName) hangi projede çalışıyorum",
+                "\(.applicationName) kurguda ne var"
+            ],
+            shortTitle: "Mek Kurgu Durumu",
+            systemImageName: "timeline.selection"
         )
     }
 }
@@ -424,14 +518,20 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alert = makeAlert()
         alert.messageText = "Mek Siri & Ses Entegrasyonu"
         alert.informativeText = """
-        Mek ile tamamen Siri üzerinden iletişime geçebilirsiniz.
+        Mek doğrudan Siri'ye bağlıdır. Kestirmeler uygulamasında hiçbir şey \
+        kurmanız veya açmanız gerekmez.
 
-        Örnek sesli komutlar:
-        • "Hey Siri, Mek"
-        • "Hey Siri, Mek'e sor sistem durumu nedir?"
-        • "Hey Siri, Mek karantinada ne var?"
-        • "Hey Siri, Mek kurgu modunu aç"
+        Sesle:
+        • "Hey Siri, Mek"  → Mek ne istediğinizi sorar
+        • "Hey Siri, Mek durum"
+        • "Hey Siri, Mek brifing"
+        • "Hey Siri, Mek karantinada ne var"
+        • "Hey Siri, Mek kurgu modu"
         • "Hey Siri, Mek temizlik yap"
+
+        Yazarak:
+        Sistem Ayarları > Erişilebilirlik > Siri > "Siri'ye Yazın" açık olsun. \
+        Siri'yi çağırıp aynı cümleleri yazabilirsiniz.
         """
         alert.addButton(withTitle: "Anladım")
         alert.runModal()

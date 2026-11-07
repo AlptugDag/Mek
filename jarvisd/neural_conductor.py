@@ -12,6 +12,8 @@ import re
 import logging
 import subprocess
 from typing import Dict, Any, List, Optional
+import proc as mekproc
+
 
 log = logging.getLogger("mek.neural_conductor")
 
@@ -32,25 +34,14 @@ class NeuralConductor:
         """Cihaz üzerindeki Apple Intelligence (FoundationModels) modeline doğrudan sorgu gönderir."""
         if not self.is_available():
             return None
-        try:
-            cmd = [JARVIS_AI_BIN]
-            if instructions:
-                cmd.append(instructions)
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            out, err = proc.communicate(input=prompt, timeout=12)
-            if proc.returncode == 0 and out.strip():
-                return out.strip()
-            log.warning("Apple Intelligence hata (%d): %s", proc.returncode, err)
-            return None
-        except Exception as e:
-            log.error("Neural Conductor sorgu hatası: %s", e)
-            return None
+        cmd = [JARVIS_AI_BIN]
+        if instructions:
+            cmd.append(instructions)
+        out, err, rc = mekproc.capture_with_input(cmd, prompt, timeout=12)
+        if rc == 0 and out.strip():
+            return out.strip()
+        log.warning("Apple Intelligence hata (%d): %s", rc, (err or "").strip()[:200])
+        return None
 
     def orchestrate(self, user_query: str = "", telemetry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """

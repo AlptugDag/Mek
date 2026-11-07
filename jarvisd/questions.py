@@ -5,7 +5,7 @@ Her soru açık seçeneklerle gelir (ör. "kapat" / "dokunma"); her seçeneğin 
 Yanıt nereden gelirse gelsin aynı yoldan yorumlanır:
   - Terminal:     mek cevap evet   |  mek evet  |  mek hayır  |  mek soru (bekleyen soruyu gösterir)
   - Menü çubuğu:  "Mek ❓" -> soru penceresindeki düğmeler
-  - Siri:         "Hey Siri, Mek" -> "evet, kapat"  (kestirme yanıtı Mek'e iletir)
+  - Siri:         "Hey Siri, Mek" -> "evet, kapat"  (App Intents yanıtı Mek'e iletir)
 Yorumlama sırası: seçenek numarası/adı/eş anlamlıları -> genel evet/hayır kalıpları -> (belirsizse)
 cihaz üzerindeki Apple Intelligence ile sınıflandırma. Hâlâ belirsizse hiçbir şey yapılmaz ve seçenekler
 yeniden söylenir. Her yanıttan sonra Mek ne anladığını ve ne yaptığını açıkça söyler.

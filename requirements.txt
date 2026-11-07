@@ -4,4 +4,5 @@ sounddevice>=0.5
 psutil>=7.0
 pyobjc-framework-Cocoa>=13.0
 pyobjc-framework-EventKit>=13.0
+pyobjc-framework-Quartz>=13.0
 ema-lightning>=1.0.1

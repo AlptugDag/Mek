@@ -85,8 +85,16 @@ Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzer
 ## Soru-Cevap Mekanizması ve Gerçek Siri Beta / Apple Intelligence Entegrasyonu
 - **Net Seçenekler:** Mek bir konuda karar gerektiğinde açık seçeneklerle sorar (örn. `kapat` / `dokunma`). Seçenekler seslendirilir ve anlaşılır yanıt beklenir.
 - **Kestirmesiz (Shortcuts'sız) Doğrudan Sistem Entegrasyonu:**
-  - **Siri Beta & Apple Intelligence (Campo / Siri AI):** Kestirmeler (Shortcuts) uygulamasına veya ara adımlara gerek kalmadan, `/Applications/Mek.app` doğrudan sisteme AppleScript Scripting Suite (`Mek.sdef`), AppIntents ve `mek://` evrensel protokolü ile bağlıdır.
-  - Siri'ye doğrudan konuşarak: *"Mek durumunu sor"*, *"Mek brifing ver"*, *"Mek temizlik yap"*, *"Mek kurgu modunu aç"*, *"Mek'e sor [sorunuz]"*.
+  - `/Applications/Mek.app` sisteme **App Intents** ile bağlıdır. Kestirmeler (Shortcuts)
+    uygulamasında hiçbir şey kurmanız, açmanız ya da oluşturmanız gerekmez; komutlar
+    doğrudan Siri'nin kendi komut dizinine kaydolur. Ayrıca AppleScript Scripting Suite
+    (`Mek.sdef`) ve `mek://` protokolü de kullanılabilir.
+  - **Sesle:** *"Hey Siri, Mek"* (Mek ne istediğinizi sorar), *"Hey Siri, Mek durum"*,
+    *"Hey Siri, Mek brifing"*, *"Hey Siri, Mek temizlik yap"*,
+    *"Hey Siri, Mek karantinada ne var"*, *"Hey Siri, Mek kurgu modu"*,
+    *"Hey Siri, Mek kurgu durumu"*, *"Hey Siri, Mek'e sor [sorunuz]"*.
+  - **Yazarak:** Sistem Ayarları → Erişilebilirlik → Siri → **"Siri'ye Yazın"** açıkken
+    Siri'yi çağırıp aynı cümleleri yazabilirsiniz.
   - Terminalden: `mek cevap kapat`, `mek evet`, `mek hayır`
   - Menü çubuğundan: Soru olduğunda menü `Mek ❓` simgesini alır ve tek tıkla yanıtlanabilir butonlar sunar.
   - **Sıfır Mikrofon Çakışması:** Yeni Siri Beta (`Siri AI.app` / `CampoRemoteService`) ve Apple Intelligence mikrofonu kullandığında Mek asla kendini sessize almaz, süreçler birbirini engellemeden pürüzsüz çalışır.
@@ -188,7 +196,41 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 
 Uygulama kaldırma; cache, tercihler, destek dosyaları, sandbox container'ları ve uygulamaya ait kullanıcı başlangıç ajanları gibi bundle ID ile doğrudan eşleşen öğeleri kapsar. Paylaşılan Group Container'lar, kullanıcı belgeleri ve yönetici yetkisi gerektiren sistem öğeleri bilerek kapsam dışındadır.
 
-**Siri ile doğrudan kullanım:** Siri'ye "Mek durumunu sor", "Mek brifing", "Mek temizlik yap" veya "Mek'e sor [sorunuz]" demeniz yeterlidir. Hiçbir Kestirme (Shortcut) kurulumu gerekmez; Mek doğrudan sistem düzeyinde AppleScript ve AppIntents köprüsüyle çalışır.
+**Siri ile doğrudan kullanım:** Siri'ye *"Hey Siri, Mek"* demeniz yeterlidir; Mek ne
+istediğinizi sorar. Hazır cümleler: *"Mek durum"*, *"Mek brifing"*, *"Mek temizlik yap"*,
+*"Mek karantinada ne var"*, *"Mek kurgu modu"*, *"Mek kurgu durumu"*,
+*"Mek'e sor [sorunuz]"*. Hiçbir Kestirme (Shortcut) kurulumu gerekmez.
+
+### Siri entegrasyonu nasıl çalışıyor (teknik)
+
+macOS'ta bir uygulamanın komutlarının Siri tarafından görülmesi için paketin içinde
+`Contents/Resources/Metadata.appintents/` klasörü bulunmalıdır. Bu klasörü normalde
+Xcode'un `appintentsmetadataprocessor` aracı üretir ve bu araç yalnızca tam Xcode
+kurulumuyla gelir.
+
+Mek bunu Xcode olmadan çözer:
+
+1. `swiftc`, `-emit-const-values` ile `ui/MekMenuBar.swift` içindeki App Intents
+   tiplerinin tüm derleme zamanı bilgisini (mangled tip adları, parametreler, Siri
+   cümleleri) bir `.swiftconstvalues` dosyasına yazar.
+2. [`bin/appintents_metadata.py`](bin/appintents_metadata.py) bu dosyayı macOS'un
+   beklediği `extract.actionsdata` (biçim sürümü 3.0) + `version.json` ikilisine
+   çevirir — yani Xcode aracının yerini alır.
+3. [`bin/build_mek_app.sh`](bin/build_mek_app.sh) paketi kurar, imzalar, karantina
+   damgasını siler ve `lsregister` ile kaydeder.
+
+Sonuç `linkd` (macOS'un App Intents dizinleyicisi) günlüğünden doğrulanabilir:
+
+```bash
+log show --last 5m --predicate 'process == "linkd"' | grep com.alptug.mek
+```
+
+`Inserting canonical bundle` satırı, komutların Siri dizinine girdiğini gösterir.
+Yalnızca `/Applications/Mek.app`'i yeniden derlemek için: `make app`.
+
+> **Not:** macOS, App Intents meta verisini yalnızca "güvenilir" paketlerden okur.
+> Yerel derlemede bu, karantina damgasının olmaması ve uygulamanın en az bir kez
+> çalışmış olması demektir; `install.sh` ikisini de halleder.
 
 Mek mikrofondan sürekli dinlemez. Ona verilecek komutlar, ayarlar ve izleme tercihleri terminalde `mek ...` komutlarıyla, Siri üzerinden veya menü çubuğundan iletilir. Sistem eylemleri bu komutlar ve güvenli, tanımlı bakım kurallarıyla sınırlıdır; keyfî terminal komutları üretip çalıştırmaz.
 

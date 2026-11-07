@@ -10,9 +10,7 @@ STATE_DIR = os.path.join(MEK_HOME, "state")
 QUARANTINE = os.path.join(MEK_HOME, "karantina")
 LOG_FILE = os.path.join(MEK_HOME, "jarvisd.log")
 SOCKET_PATH = os.path.join(MEK_HOME, "jarvis.sock")
-SIRI_PORT = 45728
 AI_BIN = os.path.join(MEK_HOME, "ai/jarvis-ai")             # Apple Intelligence legacy binary
-CLEANER = os.path.join(HOME, ".local/bin/smart_system_cleaner.sh")
 MASTER_SETUP = os.path.join(HOME, ".local/bin/workstation_master_setup.sh")
 PRIV_HELPER = "/usr/local/libexec/mek-priv"  # isteğe bağlı: sudo bash ~/.jarvis/jarvisd/install_privileged.sh
 
@@ -91,15 +89,53 @@ RENDER_PROCS = {
 }
 
 
+CONFIG_FILE = os.path.join(MEK_HOME, "jarvis.json")
+# Eski sürümler bazı ayarları (ör. gemini_api_key) config.json'a yazıyordu.
+# Okurken ikisi de görülür, jarvis.json üstün gelir; yazarken yalnızca
+# jarvis.json kullanılır. Böylece "anahtarı kaydettim ama motor bulamıyor"
+# durumu ortadan kalkar.
+LEGACY_CONFIG_FILE = os.path.join(MEK_HOME, "config.json")
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except FileNotFoundError:
+        return {}
+    except Exception:
+        return {}
+
+
 def load():
     cfg = dict(DEFAULTS)
-    try:
-        with open(os.path.join(MEK_HOME, "jarvis.json"), encoding="utf-8") as f:
-            cfg.update(json.load(f))
-    except Exception:
-        pass
+    cfg.update(_read_json(LEGACY_CONFIG_FILE))
+    cfg.update(_read_json(CONFIG_FILE))
     os.makedirs(STATE_DIR, exist_ok=True)
     os.makedirs(QUARANTINE, exist_ok=True)
+    return cfg
+
+
+def secret(name, env_var=None):
+    """Bir gizli ayarı sırayla ortam değişkeni, jarvis.json, config.json'dan okur."""
+    if env_var is None:
+        env_var = name.upper()
+    val = os.environ.get(env_var)
+    if val and val.strip():
+        return val.strip()
+    for path in (CONFIG_FILE, LEGACY_CONFIG_FILE):
+        val = _read_json(path).get(name)
+        if val and str(val).strip():
+            return str(val).strip()
+    return None
+
+
+def set_values(**values):
+    """Verilen ayarları jarvis.json'a atomik olarak işler ve yeni ayarları döner."""
+    cfg = _read_json(CONFIG_FILE)
+    cfg.update(values)
+    save(cfg)
     return cfg
 
 

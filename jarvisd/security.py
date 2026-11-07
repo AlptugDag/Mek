@@ -20,7 +20,10 @@ import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
+
+import proc as mekproc
 
 import psutil
 
@@ -87,10 +90,38 @@ DOWNLOAD_GATE_STATE = os.path.join(STATE_DIR, "download_gate.json")
 TRUSTED = os.path.join(STATE_DIR, "trusted_items.json")  # karantinadan geri alınan, bir daha dokunulmayacak öğeler
 
 
+OWN_LABEL_PREFIXES = ("com.alptug.jarvis", "com.alptug.mek")
+OWN_ROOTS = (
+    MEK_HOME + os.sep,
+    os.path.join(HOME, ".local/bin") + os.sep,
+    "/Applications/Mek.app" + os.sep,
+)
+# Mek'in kendi launchd ajanlarının plist dosyaları. İkinci savunma hattı:
+# is_own_item() yanılsa bile Mek kendi başlangıç öğesini asla devre dışı
+# bırakamaz / karantinaya alamaz.
+OWN_PLIST_PREFIX = os.path.join(HOME, "Library/LaunchAgents/com.alptug.")
+
+
+def is_own_plist(path):
+    """Verilen plist Mek'in kendi launchd ajanı mı?"""
+    return bool(path) and os.path.abspath(path).startswith(OWN_PLIST_PREFIX)
+
+
 def is_own_item(label, prog):
     """Mek'in kendi ajanları (daemon, menü çubuğu, /Applications/Mek.app) kendi kendini karantinaya almasın."""
-    return bool(prog) and label.startswith(("com.alptug.jarvis", "com.alptug.mek")) and \
-        os.path.realpath(prog).startswith((MEK_HOME + os.sep, os.path.join(HOME, ".local/bin") + os.sep, "/Applications/Mek.app" + os.sep))
+    if not label or not label.startswith(OWN_LABEL_PREFIXES):
+        return False
+    if not prog:
+        # Mek etiketli ama programı okunamayan bir öğe de bizimdir; kendimizi
+        # şüpheli saymaktan iyidir.
+        return True
+    # Hem plist'te yazılı yol hem de sembolik bağları çözülmüş hali denenir.
+    # Yalnızca realpath'e bakmak kritik bir hataydı: ~/.jarvis/venv/bin/python
+    # Homebrew'daki ad-hoc imzalı python'a bağlıdır, dolayısıyla Mek kendi
+    # daemon ajanını "imzasız, şüpheli konumda yabancı öğe" sayıp devre dışı
+    # bırakıyor ve kendini kapatıyordu.
+    candidates = {os.path.abspath(prog), os.path.realpath(prog)}
+    return any(c.startswith(OWN_ROOTS) for c in candidates)
 
 
 def _load(path, default):
@@ -102,9 +133,29 @@ def _load(path, default):
 
 
 def _save(path, data):
-    with open(path + ".tmp", "w") as f:
-        json.dump(data, f)
-    os.replace(path + ".tmp", path)
+    """Durum dosyasını atomik yazar.
+
+    Sabit bir ".tmp" adı kullanmak yarış koşuluna yol açıyordu: iki iş parçacığı
+    aynı dosyayı yazdığında ilkinin os.replace'i geçici dosyayı tüketiyor,
+    ikincisi FileNotFoundError ile çöküyordu (daemon iş parçacığını düşürüyordu).
+    Her yazma kendi benzersiz geçici dosyasını kullanır.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix="." + os.path.basename(path) + ".")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def signature(path):
@@ -267,9 +318,12 @@ class Security:
         for plist in glob.glob(os.path.join(HOME, "Library/LaunchAgents/*.plist")):
             label, prog = _program_of(plist)
             try:
-                text = open(plist, "rb").read().decode("utf-8", "ignore")
+                with open(plist, "rb") as fh:
+                    text = fh.read().decode("utf-8", "ignore")
             except Exception:
                 continue
+            if is_own_plist(plist) or is_own_item(label, prog):
+                continue  # Mek kendi ajanını asla devre dışı bırakmaz
             if needle in text or (prog and prog in needle):
                 subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}", plist], capture_output=True)
                 self.quarantine(plist)
@@ -294,7 +348,8 @@ class Security:
         """Karantina kayıtları: [(no, zaman, özgün yol, karantina yolu, hâlâ orada mı)]."""
         rows = []
         try:
-            lines = open(os.path.join(QUARANTINE, "kayit.txt"), encoding="utf-8").read().splitlines()
+            with open(os.path.join(QUARANTINE, "kayit.txt"), encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
         except OSError:
             return rows
         for i, line in enumerate(lines, 1):
@@ -359,7 +414,7 @@ class Security:
             if base.get(p) == h or p in trusted:
                 continue
             label, prog, full_args = _plist_details(p)
-            if is_own_item(label, prog):
+            if is_own_plist(p) or is_own_item(label, prog):
                 continue
             sig = signature(prog) if prog else "missing"
             script_issue = inspect_script_text(full_args)
@@ -390,7 +445,8 @@ class Security:
             if not os.path.isfile(path):
                 continue
             try:
-                raw = open(path, "rb").read()
+                with open(path, "rb") as fh:
+                    raw = fh.read()
                 h = hashlib.sha1(raw).hexdigest()
                 current[path] = h
                 if base.get(path) != h:
@@ -451,7 +507,8 @@ class Security:
                     if low.endswith((".command", ".sh", ".tool")) and s.st_size < 2 * 1024 * 1024:
                         checked += 1
                         try:
-                            text = open(p, encoding="utf-8", errors="ignore").read()
+                            with open(p, encoding="utf-8", errors="ignore") as fh:
+                                text = fh.read()
                         except OSError:
                             continue
                         issue = inspect_script_text(text)
@@ -471,9 +528,7 @@ class Security:
             db = "/opt/homebrew/var/lib/clamav"
             cmd = ["nice", "-n", "20", clam, "--no-summary", "--infected", f"--database={db}"] + installer_bins[:10]
             try:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-                subprocess.run(["/usr/sbin/taskpolicy", "-b", "-p", str(proc.pid)], capture_output=True)
-                out, _ = proc.communicate(timeout=300)
+                out, _timed_out = mekproc.capture_background(cmd, timeout=300)
                 for line in out.splitlines():
                     m = re.match(r"(.+): (.+) FOUND$", line)
                     if m:
@@ -541,9 +596,8 @@ class Security:
             return 0
         db = "/opt/homebrew/var/lib/clamav"
         cmd = ["nice", "-n", "20", clam, "--no-summary", "--infected", f"--database={db}"] + files
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        subprocess.run(["/usr/sbin/taskpolicy", "-b", "-p", str(proc.pid)], capture_output=True)  # E-çekirdekler
-        out, _ = proc.communicate(timeout=1800)
+        # E-çekirdeklerde, zaman aşımında süreci kesinlikle sonlandırarak.
+        out, _timed_out = mekproc.capture_background(cmd, timeout=1800)
         found = 0
         for line in out.splitlines():
             m = re.match(r"(.+): (.+) FOUND$", line)
