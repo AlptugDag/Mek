@@ -14,7 +14,15 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.1.0:** Apple Intelligence Vision & Color Grading Motoru (Matrix, Oppenheimer, Blade Runner vb. film rengi emülasyonu, görselden renk klonlama, doğal dille efekt sentezi), Otonom Kaba Kurgu Motoru (FCPXML / CMX 3600 EDL), TTS için Türkçe fonetik "Epıl" telaffuz optimizasyonu ve Siri yanıt vermeme/kilitlenme kalkanı devrede. Önceki sürümler: [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9), [`v0.0.0.8`](https://github.com/AlptugDag/Mek/tree/v0.0.0.8).
+> **v0.0.1.2:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
+> artık App Intents ile macOS'un kendi Siri dizinine kaydoluyor: 8 intent, 23 Türkçe
+> cümle, sesle ve "Siri'ye Yazın" ile. Kestirmeler (Shortcuts) uygulamasında hiçbir şey
+> kurmanız gerekmiyor. Tam Xcode gerektirmeyen App Intents meta veri üreticisi
+> ([`bin/appintents_metadata.py`](bin/appintents_metadata.py)) eklendi. Ayrıca kapsamlı
+> hata ayıklama: Mek'in kendi launchd servisini karantinaya alıp kendini kapattığı
+> kritik hata, durum dosyalarındaki yarış koşulu, zaman aşımsız alt süreç çağrıları,
+> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (126 test).
+> Önceki sürümler: [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
