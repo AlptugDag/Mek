@@ -20,11 +20,24 @@ import subprocess
 import logging
 from typing import Dict, List, Tuple, Any, Optional
 
+import config
+import proc
+
+
 log = logging.getLogger("mek.viral_hook")
 
-MEK_HOME = os.path.expanduser("~/.jarvis")
+MEK_HOME = config.MEK_HOME
 EDL_DIR = os.path.join(MEK_HOME, "edl")
-os.makedirs(EDL_DIR, exist_ok=True)
+
+
+def _ensure_edl_dir():
+    """EDL klasörünü ihtiyaç anında oluşturur.
+
+    Eskiden modül içe aktarılırken oluşturuluyordu; testlerin ve salt-okunur
+    araçların kullanıcı dizinine yazmasına yol açan bir yan etkiydi.
+    """
+    os.makedirs(EDL_DIR, exist_ok=True)
+    return EDL_DIR
 
 
 class ViralHookSynthesizer:
@@ -35,23 +48,8 @@ class ViralHookSynthesizer:
         self.gemini_api_key = gemini_api_key or self._resolve_gemini_key()
 
     def _resolve_gemini_key(self) -> Optional[str]:
-        # 1. Ortam değişkeni
-        env_key = os.environ.get("GEMINI_API_KEY")
-        if env_key:
-            return env_key.strip()
-
-        # 2. ~/.jarvis/jarvis.json ayar dosyası
-        cfg_path = os.path.join(MEK_HOME, "jarvis.json")
-        if os.path.exists(cfg_path):
-            try:
-                with open(cfg_path, "r", encoding="utf-8") as f:
-                    d = json.load(f)
-                    k = d.get("gemini_api_key")
-                    if k:
-                        return str(k).strip()
-            except Exception:
-                pass
-        return None
+        """GEMINI_API_KEY ortam değişkeni -> jarvis.json -> (eski) config.json."""
+        return config.secret("gemini_api_key", "GEMINI_API_KEY")
 
     # --- Ses ve Transkript Çıkarımı ---
 
@@ -63,9 +61,13 @@ class ViralHookSynthesizer:
         wav_path = audio_path
         tmp_wav = None
         if not audio_path.lower().endswith(".wav"):
-            tmp_wav = f"/tmp/mek_vh_{abs(hash(audio_path)) % 1000000}.wav"
-            cmd = ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", "-vn", tmp_wav]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            tmp_wav = proc.temp_wav("vh")
+            if not proc.ffmpeg_to_wav(audio_path, tmp_wav):
+                try:
+                    os.unlink(tmp_wav)
+                except OSError:
+                    pass
+                return []
             wav_path = tmp_wav
 
         peaks = []
@@ -249,6 +251,7 @@ class ViralHookSynthesizer:
 
         # FCPXML ve EDL dışa aktar
         base_name = f"ViralHook_{os.path.splitext(os.path.basename(video_path))[0]}"
+        _ensure_edl_dir()
         fcpxml_path = os.path.join(EDL_DIR, f"{base_name}.fcpxml")
         edl_path = os.path.join(EDL_DIR, f"{base_name}.edl")
 

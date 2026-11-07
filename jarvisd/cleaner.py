@@ -22,6 +22,8 @@ import re
 import shutil
 import subprocess
 import time
+import proc
+
 
 HOME = os.path.expanduser("~")
 H = lambda p: os.path.join(HOME, p)  # noqa: E731
@@ -242,7 +244,7 @@ class Cleaner:
                      ("Library/Caches/CocoaPods", 30), ("Library/Caches/org.swift.swiftpm", 30),
                      ("Library/Caches/ms-playwright", 60), ("Library/Caches/Cypress", 60), (".android/cache", 30)):
             self.age("Paket yöneticisi önbellekleri", H(p), d)
-        if shutil.which("docker") and subprocess.run(["docker", "info"], capture_output=True).returncode == 0:
+        if proc.have("docker") and proc.ok(["docker", "info"], timeout=15):
             self.cmd("Docker", ["docker", "builder", "prune", "-f", "--filter", "until=720h"])
             self.cmd("Docker", ["docker", "image", "prune", "-f", "--filter", "until=720h"])
 
@@ -284,7 +286,7 @@ class Cleaner:
 def du(path):
     if not path or not os.path.exists(path):
         return 0
-    r = subprocess.run(["du", "-sk", path], capture_output=True, text=True)
+    r = proc.run(["du", "-sk", path], capture_output=True, text=True, timeout=60)
     try:
         return int(r.stdout.split()[0]) * 1024
     except (ValueError, IndexError):

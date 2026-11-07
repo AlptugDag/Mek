@@ -20,10 +20,19 @@ from typing import Dict, List, Tuple, Any, Optional
 
 log = logging.getLogger("mek.multicam")
 
-MEK_HOME = os.path.expanduser("~/.jarvis")
-AI_BIN = os.path.join(MEK_HOME, "ai/jarvis-ai")
+import config
+import proc
+
+
+MEK_HOME = config.MEK_HOME
+AI_BIN = config.AI_BIN
 EDL_DIR = os.path.join(MEK_HOME, "edl")
-os.makedirs(EDL_DIR, exist_ok=True)
+
+
+def _ensure_edl_dir():
+    """EDL klasörünü ihtiyaç anında oluşturur (içe aktarma yan etkisi olmasın)."""
+    os.makedirs(EDL_DIR, exist_ok=True)
+    return EDL_DIR
 
 
 class MulticamDirector:
@@ -119,9 +128,13 @@ class MulticamDirector:
         wav_path = audio_path
         tmp_wav = None
         if not audio_path.lower().endswith(".wav"):
-            tmp_wav = f"/tmp/mek_mc_{abs(hash(audio_path)) % 1000000}.wav"
-            cmd = ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", "-vn", tmp_wav]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            tmp_wav = proc.temp_wav("mc")
+            if not proc.ffmpeg_to_wav(audio_path, tmp_wav):
+                try:
+                    os.unlink(tmp_wav)
+                except OSError:
+                    pass
+                return []
             wav_path = tmp_wav
 
         energies = []
@@ -294,6 +307,7 @@ class MulticamDirector:
 
         # CMX 3600 EDL ve FCPXML üret
         base_name = f"Multicam_{style['pacing']}_{int(total_duration)}s"
+        _ensure_edl_dir()
         edl_path = os.path.join(EDL_DIR, f"{base_name}.edl")
         fcpxml_path = os.path.join(EDL_DIR, f"{base_name}.fcpxml")
 

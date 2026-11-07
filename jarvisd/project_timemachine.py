@@ -26,6 +26,8 @@ import re
 import shutil
 import subprocess
 import time
+import proc
+
 
 log = logging.getLogger("mek.timemachine")
 
@@ -80,7 +82,7 @@ def _sha256_file(path):
 
 def clone_apfs(src, dst):
     """APFS üzerinde `cp -c` (Copy-on-Write sıfır alanlı klon) yapar; farklı diskteyse normal kopyalar."""
-    r = subprocess.run(["/bin/cp", "-c", src, dst], capture_output=True)
+    r = proc.run(["/bin/cp", "-c", src, dst], capture_output=True, timeout=300)
     if r.returncode == 0 and os.path.exists(dst):
         return "apfs_cow"
     shutil.copy2(src, dst)

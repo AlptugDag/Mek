@@ -14,6 +14,8 @@ import logging
 import subprocess
 from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
+import proc
+
 
 log = logging.getLogger("mek.vision_color")
 
@@ -310,16 +312,9 @@ class VisionColorEngine:
 
         ai_out = None
         if os.access(JARVIS_AI_BIN, os.X_OK):
-            try:
-                proc = subprocess.Popen(
-                    [JARVIS_AI_BIN, system],
-                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-                )
-                out, _ = proc.communicate(input=prompt, timeout=15)
-                if proc.returncode == 0:
-                    ai_out = out.strip()
-            except Exception as e:
-                log.warning("Apple Intelligence sorgu hatası: %s", e)
+            out, _err, rc = proc.capture_with_input([JARVIS_AI_BIN, system], prompt, timeout=15)
+            if rc == 0 and out.strip():
+                ai_out = out.strip()
 
         # Varsayılan değerler
         fx_params = {
