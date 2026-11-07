@@ -442,12 +442,18 @@ class QuietHoursTests(unittest.TestCase):
 
 
 class SpeechOutputDeviceTests(unittest.TestCase):
-    """Ses, varsayılan çıkış yerine dahili hoparlöre zorlanıyordu.
+    """Mek'in sesi klavyedeki ses tuşlarından etkileniyordu.
 
-    jarvis.py içinde `TARGET_DEVICE_NAME = "mac studio"` sabit kodluydu ve
-    `speech_device` ayarı hiç okunmuyordu; kulaklık takılı olsa bile Mek
-    Mac Studio hoparlöründen konuşuyor, üstelik donanım ses seviyesini
-    değiştirebiliyordu.
+    Mek daima dahili Mac Studio hoparlöründen ve tam %30 düzeyinde
+    konuşmalı. Eski kod donanım sesine yalnızca hoparlör sessizse ya da
+    %5'in altındaysa dokunuyor, aksi hâlde dijital ölçekleme yapıyordu:
+
+        digital_scale = min(1.0, TARGET_VOLUME / orig_vol)
+
+    Bu kıskaç yüzünden donanım sesi %30'un ALTINA indirildiğinde telafi
+    yapılamıyor (0.30/0.10 = 3.0 -> 1.0) ve Mek kısık konuşuyordu; yani
+    ses tuşuyla Mek'in sesine müdahale edilebiliyordu. Ayrıca
+    `speech_device`/`speech_volume` ayarları hiç okunmuyordu.
     """
 
     @staticmethod
@@ -461,9 +467,53 @@ class SpeechOutputDeviceTests(unittest.TestCase):
         mod.MEK_HOME = home
         return mod
 
-    def test_default_is_system_output(self):
+    def test_default_device_is_builtin_speaker(self):
         import config as cfgmod
-        self.assertEqual(cfgmod.DEFAULTS["speech_device"], "system")
+        self.assertEqual(cfgmod.DEFAULTS["speech_device"], "mac studio")
+        self.assertEqual(cfgmod.DEFAULTS["speech_volume"], 0.30)
+
+    def test_module_default_is_builtin_speaker(self):
+        mod = self._load("/nonexistent")
+        self.assertEqual(mod.TARGET_DEVICE_NAME, "mac studio")
+        self.assertFalse(mod.USE_SYSTEM_OUTPUT)
+        self.assertAlmostEqual(mod.TARGET_VOLUME, 0.30)
+
+    def test_volume_is_locked_and_restored_around_playback(self):
+        """Donanım sesi konuşma boyunca hedefe sabitlenip sonra geri alınmalı."""
+        mod = self._load("/nonexistent")
+        calls = []
+        mod.set_mac_studio_hardware_volume = lambda ca, vol=None: calls.append(("set", vol))
+        mod.restore_mac_studio_volume = lambda ca, vol, muted: calls.append(("restore", vol, muted))
+        # Kullanıcı sesi %10'a indirmiş olsun: eski kodda Mek de kısılıyordu.
+        mod.get_mac_studio_devices = lambda: (90, 5)
+        mod.get_mac_studio_hw_status = lambda ca: (0.10, False, False)
+        mod.apply_mac_studio_eq = lambda audio, fs=48000: audio
+        played = {}
+
+        class FakeSpeech:
+            audio = __import__("numpy").zeros(16, dtype="float32")
+            sample_rate = 48000
+
+        class FakeEMA:
+            def say(self, text, speed=1.0):
+                return FakeSpeech()
+
+        fake_mod = types.ModuleType("ema_lightning")
+        fake_mod.EMA = FakeEMA
+        sys.modules["ema_lightning"] = fake_mod
+        mod.sd = types.SimpleNamespace(
+            play=lambda a, samplerate=None, device=None: played.update(device=device),
+            wait=lambda: None)
+        try:
+            mod.speak("merhaba")
+        finally:
+            sys.modules.pop("ema_lightning", None)
+
+        self.assertIn(("set", 0.30), calls, "donanım sesi %30'a sabitlenmeliydi")
+        self.assertIn(("restore", 0.10, False), calls,
+                      "konuşma sonunda kullanıcının %10 düzeyi geri alınmalıydı")
+        self.assertLess(calls.index(("set", 0.30)), calls.index(("restore", 0.10, False)))
+        self.assertEqual(played.get("device"), 5, "ses Mac Studio hoparlöründen çalmalı")
 
     def test_system_output_skips_device_lookup(self):
         mod = self._load("/nonexistent")
@@ -489,7 +539,7 @@ class SpeechOutputDeviceTests(unittest.TestCase):
     def test_user_setting_default_when_nothing_configured(self):
         with tempfile.TemporaryDirectory() as d:
             mod = self._load(d)
-            self.assertEqual(mod._user_setting("speech_device", "system"), "system")
+            self.assertEqual(mod._user_setting("speech_device", "mac studio"), "mac studio")
 
     def test_named_device_still_supported(self):
         mod = self._load("/nonexistent")

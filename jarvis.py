@@ -43,11 +43,10 @@ def _user_setting(name, default):
     return default
 
 
-# "system" (varsayılan): sesi macOS'un o anki varsayılan çıkış aygıtına verir,
-# yani kulaklık takılıysa kulaklığa. Eskiden burada "mac studio" sabit kodluydu
-# ve speech_device ayarı hiç okunmuyordu; Mek, varsayılan çıkışınız ne olursa
-# olsun dahili hoparlörden konuşuyordu.
-TARGET_DEVICE_NAME = str(_user_setting("speech_device", "system")).strip().lower()
+# Mek daima dahili Mac Studio hoparlöründen konuşur: kulaklık takılı olsa bile
+# sesli uyarılar hoparlörden gelir. Ayar artık gerçekten okunuyor (eskiden
+# sabit kodluydu); "system" yazılırsa sistemin varsayılan çıkışı kullanılır.
+TARGET_DEVICE_NAME = str(_user_setting("speech_device", "mac studio")).strip().lower()
 USE_SYSTEM_OUTPUT = TARGET_DEVICE_NAME in ("", "system", "default", "sistem", "varsayılan")
 try:
     TARGET_VOLUME = max(0.0, min(1.0, float(_user_setting("speech_volume", 0.30))))
@@ -183,6 +182,26 @@ def set_mac_studio_hardware_volume(ca_id, volume=TARGET_VOLUME):
         coreaudio.AudioObjectSetPropertyData(ca_id, ctypes.byref(mute_addr), 0, None, ctypes.sizeof(unmute), ctypes.byref(unmute))
     except Exception as e:
         print(f"[Mek] Donanım ses seviyesi ayarlanamadı: {e}", file=sys.stderr)
+
+
+def restore_mac_studio_volume(ca_id, volume, muted):
+    """Konuşmadan önceki donanım ses düzeyini ve sessize alma durumunu geri yükler."""
+    if not ca_id:
+        return
+    try:
+        vol_addr = AudioObjectPropertyAddress(
+            int.from_bytes(b"volm", "big"), int.from_bytes(b"outp", "big"), 0)
+        v = ctypes.c_float(volume)
+        coreaudio.AudioObjectSetPropertyData(
+            ca_id, ctypes.byref(vol_addr), 0, None, ctypes.sizeof(v), ctypes.byref(v))
+
+        mute_addr = AudioObjectPropertyAddress(
+            int.from_bytes(b"mute", "big"), int.from_bytes(b"outp", "big"), 0)
+        m = ctypes.c_uint32(1 if muted else 0)
+        coreaudio.AudioObjectSetPropertyData(
+            ca_id, ctypes.byref(mute_addr), 0, None, ctypes.sizeof(m), ctypes.byref(m))
+    except Exception as e:
+        print(f"[Mek] Donanım ses seviyesi geri alınamadı: {e}", file=sys.stderr)
 
 
 # --- MAC STUDIO HOPARLÖRÜ İÇİN ÖZEL AKUSTİK EKOLAYZIR (DSP) ---
@@ -433,8 +452,8 @@ def speak(text: str):
         tts = EMA()
         speech = tts.say(text, speed=SPEECH_SPEED)
 
-        # Akustik ekolayzır yalnızca Mac Studio hoparlörüne özeldir; kulaklıkta
-        # ya da başka bir çıkışta sesi gereksiz yere renklendirir.
+        # Akustik ekolayzır Mac Studio hoparlörüne özeldir; başka bir çıkış
+        # seçilmişse sesi gereksiz yere renklendirmemek için atlanır.
         audio_eq = speech.audio if USE_SYSTEM_OUTPUT else apply_mac_studio_eq(
             speech.audio, fs=speech.sample_rate)
 
@@ -443,52 +462,52 @@ def speak(text: str):
         orig_vol, orig_muted, other_media_playing = (
             (1.0, False, False) if USE_SYSTEM_OUTPUT else get_mac_studio_hw_status(ca_id))
 
-        # Kural: Başka bir medya oynatılıyorsa donanım ses seviyesine ASLA DOKUNULMAZ!
-        # Ses, doğrudan dijital PCM sinyali üzerinde akıllıca ölçeklenir; böylece diğer medyanın sesi 1 dB bile değişmez.
-        restoration_needed = False
-        if USE_SYSTEM_OUTPUT:
-            # Varsayılan çıkış (kulaklık, hoparlör, ne seçiliyse) kullanıcınındır.
-            # Donanım ses seviyesine ASLA dokunulmaz, sessize alma durumu
-            # değiştirilmez; yalnızca Mek'in kendi sinyali dijital olarak
-            # kısılır. Böylece klavyedeki ses tuşları tamamen sizde kalır.
-            audio_eq = (audio_eq * TARGET_VOLUME).astype(np.float32)
-        elif other_media_playing:
-            effective_hw = max(0.05, orig_vol)
-            digital_scale = min(1.0, TARGET_VOLUME / effective_hw)
-            audio_eq = (audio_eq * digital_scale).astype(np.float32)
-            print(f"[Mek] Eşzamanlı medya tespit edildi. Donanım sesine dokunulmadı ({orig_vol*100:.0f}%). "
-                  f"Mek dijital olarak %30 duyulabilirlik düzeyine ({digital_scale*100:.0f}%) ölçeklendi.")
+        # Mek'in sesi HER ZAMAN tam olarak %{TARGET_VOLUME} düzeyinde duyulmalı:
+        # klavyedeki ses tuşları Mek'e karışamamalı.
+        #
+        # Eskiden donanım sesine yalnızca hoparlör sessizse ya da %5'in
+        # altındaysa dokunuluyor, aksi hâlde dijital ölçekleme yapılıyordu:
+        #     digital_scale = min(1.0, TARGET_VOLUME / orig_vol)
+        # Bu `min(1.0, ...)` kıskacı yüzünden donanım sesi %30'un ALTINA
+        # indirildiğinde (ör. %10) telafi yapılamıyor (0.30/0.10 = 3.0 -> 1.0)
+        # ve Mek donanımın %10'undan, yani kısık konuşuyordu. Yani ses tuşuyla
+        # Mek'in sesine müdahale edilebiliyordu.
+        #
+        # Artık konuşma süresince hoparlörün donanım sesi tam olarak hedefe
+        # sabitlenir ve konuşma biter bitmez sizin bıraktığınız değere
+        # (sessize alma durumu dâhil) geri alınır.
+        volume_locked = False
+        if ca_id is not None:
+            set_mac_studio_hardware_volume(ca_id, TARGET_VOLUME)
+            volume_locked = True
         else:
-            if orig_muted or orig_vol < 0.05:
-                set_mac_studio_hardware_volume(ca_id, TARGET_VOLUME)
-                restoration_needed = True
-            elif abs(orig_vol - TARGET_VOLUME) > 0.05:
-                digital_scale = min(1.0, TARGET_VOLUME / max(0.05, orig_vol))
-                audio_eq = (audio_eq * digital_scale).astype(np.float32)
+            # Hoparlör CoreAudio üzerinden bulunamadı: elimizden gelen tek şey
+            # dijital ölçekleme.
+            audio_eq = (audio_eq * TARGET_VOLUME).astype(np.float32)
 
         pct = int(TARGET_VOLUME * 100)
-        if USE_SYSTEM_OUTPUT:
-            print("[Mek] EMA Lightning sesi üretildi.")
-            print(f"[Mek] Sistemin varsayılan çıkışından %{pct} düzeyinde çalınıyor "
-                  "(donanım sesine dokunulmadı)...")
+        print("[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
+        if volume_locked:
+            print(f"[Mek] Doğrudan {TARGET_DEVICE_NAME} üzerinden %{pct} ses seviyesinde "
+                  f"çalınıyor (donanım sesi %{int(orig_vol * 100)} -> %{pct} sabitlendi, "
+                  "sonra geri alınacak)...")
+            if other_media_playing:
+                print("[Mek] Not: Hoparlörde başka bir medya çalıyor; konuşma boyunca "
+                      "ses düzeyi geçici olarak değişecek.")
         else:
-            print("[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
-            print(f"[Mek] Doğrudan {TARGET_DEVICE_NAME} üzerinden %{pct} ses seviyesinde çalınıyor...")
+            print(f"[Mek] %{pct} düzeyinde çalınıyor...")
 
-        if sd_idx is not None:
-            sd.play(audio_eq, samplerate=speech.sample_rate, device=sd_idx)
+        try:
+            if sd_idx is not None:
+                sd.play(audio_eq, samplerate=speech.sample_rate, device=sd_idx)
+            else:
+                sd.play(audio_eq, samplerate=speech.sample_rate)
             sd.wait()
-        else:
-            sd.play(audio_eq, samplerate=speech.sample_rate)
-            sd.wait()
-
-        if restoration_needed and ca_id is not None:
-            if orig_muted:
-                mute_addr = AudioObjectPropertyAddress(
-                    int.from_bytes(b"mute", "big"), int.from_bytes(b"outp", "big"), 0)
-                m = ctypes.c_uint32(1)
-                coreaudio.AudioObjectSetPropertyData(ca_id, ctypes.byref(mute_addr), 0, None, ctypes.sizeof(m), ctypes.byref(m))
-            set_mac_studio_hardware_volume(ca_id, orig_vol)
+        finally:
+            # Oynatma hata verse bile kullanıcının ses düzeyi geri alınır;
+            # aksi hâlde hoparlör %30'da kalırdı.
+            if volume_locked:
+                restore_mac_studio_volume(ca_id, orig_vol, orig_muted)
 
         print("[Mek] Oynatma başarıyla tamamlandı.")
     except Exception as e:

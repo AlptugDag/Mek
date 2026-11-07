@@ -14,17 +14,18 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.1.3:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
+> **v0.0.1.4:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
 > artık App Intents ile macOS'un kendi Siri dizinine kaydoluyor: 8 intent, 23 Türkçe
 > cümle, sesle ve "Siri'ye Yazın" ile. Kestirmeler (Shortcuts) uygulamasında hiçbir şey
 > kurmanız gerekmiyor. Tam Xcode gerektirmeyen App Intents meta veri üreticisi
 > ([`bin/appintents_metadata.py`](bin/appintents_metadata.py)) eklendi. Ayrıca kapsamlı
 > hata ayıklama: Mek'in kendi launchd servisini karantinaya alıp kendini kapattığı
 > kritik hata, durum dosyalarındaki yarış koşulu, zaman aşımsız alt süreç çağrıları,
-> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (137 test).
-> Ayrıca sesli bildirimler artık sistemin varsayılan ses çıkışını (kulaklık dahil)
-> kullanıyor ve sessiz saatler açılış selamı ile brifingi de kapsıyor.
-> Önceki sürümler: [`v0.0.1.2`](https://github.com/AlptugDag/Mek/tree/v0.0.1.2), [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
+> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (139 test).
+> Ayrıca sessiz saatler artık açılış selamı ile brifingi de kapsıyor ve Mek'in sesi
+> klavyedeki ses tuşlarından etkilenmiyor: konuşma boyunca hoparlörün donanım düzeyi
+> %30'a sabitlenip hemen ardından sizin bıraktığınız değere geri alınıyor.
+> Önceki sürümler: [`v0.0.1.3`](https://github.com/AlptugDag/Mek/tree/v0.0.1.3), [`v0.0.1.2`](https://github.com/AlptugDag/Mek/tree/v0.0.1.2), [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -55,18 +56,19 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **İsteğe bağlı Gemini:** Apple Intelligence yetmezse ya da soruya `derin` ile başlarsanız Gemini kullanılır. Bunun için `~/.jarvis/jarvis.json` içine `"gemini_api_key": "..."` ekleyin (`chmod 600`; isteğe bağlı `"gemini_model"`). Gemini'ye yalnızca sorunuz, kısa durum özeti ve araç çıktıları gönderilir. Anahtar yoksa bulut hiç kullanılmaz.
 - **Sesle sorma:** Mikrofon sürekli dinlemez; yalnızca menüdeki "Sesle sor" tıklanınca en fazla 8 saniye açılır, çözümleme cihaz üzerinde yapılır.
 
-## Akıllı Seslendirme
-- **Sizin seçtiğiniz ses çıkışı (varsayılan):** Mek, macOS'un o anki varsayılan çıkış
-  aygıtından konuşur — kulaklık takılıysa kulaklıktan. Donanım ses seviyesine ve
-  sessize alma durumuna **hiç dokunmaz**; yalnızca kendi sinyalini `speech_volume`
-  düzeyine (varsayılan %30) dijital olarak kısar. Böylece klavyedeki ses tuşları
-  her zaman sizde kalır.
-- **Belirli bir hoparlöre sabitleme (isteğe bağlı):** `~/.jarvis/jarvis.json` içine
-  `"speech_device": "mac studio"` yazarsanız Mek varsayılan çıkıştan bağımsız olarak
-  o aygıttan konuşur ve Mac Studio hoparlörüne özel akustik EQ'yu uygular. Bu kipte,
-  hoparlörde başka bir medya çalıyorsa donanım ses düzeyine yine dokunulmaz; Mek
-  kendi sesini dijital olarak ölçekler.
-- **Ses düzeyi:** `"speech_volume": 0.30` (0.0–1.0 arası).
+## Akıllı Seslendirme ve Mac Studio Hoparlörü
+- **Daima dahili hoparlör:** Mek tüm sesli bilgilendirmelerini, kulaklık takılı olsa
+  ve sistemin varsayılan çıkışı başka bir aygıt olsa bile, doğrudan Mac Studio'nun
+  dahili hoparlöründen yapar ve o hoparlöre özel akustik EQ'yu uygular.
+- **Değişmez %30:** Konuşma süresince hoparlörün donanım ses düzeyi tam olarak
+  `speech_volume` değerine (varsayılan %30) sabitlenir, konuşma biter bitmez sizin
+  bıraktığınız düzeye (sessize alma durumu dâhil) geri alınır. Böylece Mek'in sesi
+  **klavyedeki ses tuşlarından etkilenmez**; sesi kısmanız ya da açmanız Mek'in
+  duyulurluğunu değiştirmez. Oynatma hata verse bile eski düzey geri yüklenir.
+- **Ses düzeyi:** `~/.jarvis/jarvis.json` içinde `"speech_volume": 0.30` (0.0–1.0).
+- **Başka bir çıkış (isteğe bağlı):** `"speech_device": "system"` yazılırsa Mek
+  sistemin varsayılan çıkışını kullanır ve donanım sesine hiç dokunmaz. Aygıt adının
+  bir parçası da yazılabilir.
 - **Sessiz saatler:** `quiet_start_hour`–`quiet_end_hour` (varsayılan 00:00–11:00)
   arasında Mek kendiliğinden konuşmaz. Buna açılış selamı ve açılış brifingi de
   dâhildir. Sessiz saatte yalnızca **acil güvenlik uyarıları** seslendirilir.

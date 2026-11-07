@@ -28,10 +28,11 @@ DEFAULTS = {
     "event_alert_min": 10,
     "morning_greeting_from_hour": 6,  # günün ilk selamı: siz başındaysanız bu saatten sonra sessiz saatte de söylenir
     "speech_volume": 0.30,            # tüm seslendirmeler bu düzeye dijital olarak kısılır
-    # "system": sesi macOS'un o anki varsayılan çıkışına verir (kulaklık takılıysa
-    # kulaklığa) ve donanım ses seviyesine hiç dokunmaz. Belirli bir hoparlöre
-    # sabitlemek için aygıt adının bir parçası yazılabilir, ör. "mac studio".
-    "speech_device": "system",
+    # Mek daima dahili hoparlörden konuşur; konuşma boyunca hoparlörün donanım
+    # sesi speech_volume düzeyine sabitlenir ve hemen ardından sizin
+    # bıraktığınız değere geri alınır. Böylece klavyedeki ses tuşları Mek'in
+    # sesini etkileyemez. "system" yazılırsa sistemin varsayılan çıkışı kullanılır.
+    "speech_device": "mac studio",
     "crash_alerts": "repeated",       # "off": hiç | "repeated": aynı uygulama 24 saatte 3+ kez çökerse tek sessiz bildirim
     "memory_reserve_gb": 10,          # macOS + tarayıcı vb. için ağır uygulamalara hiç verilmeyen bellek
     "memory_overcommit": 1.2,         # aynı anda açık uygulamalar nadiren aynı anda tepe yapar
