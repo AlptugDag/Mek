@@ -1345,9 +1345,24 @@ class Mek:
             time.sleep(1.2)  # Ses ve donanım sürücülerinin hazır olması için kısa tolerans
             now = dt.datetime.now()
             today = dt.date.today()
-            greeted = open(self.greet_file).read().strip() if os.path.exists(self.greet_file) else ""
+
+            # Sessiz saatlere açılış selamı da uyar. Eskiden bu denetim yalnızca
+            # ana döngüdeki selamlamada vardı; servis sessiz saatte yeniden
+            # başladığında (ya da gece yarısından sonra ilk kez çalıştığında)
+            # Mek gecenin bir yarısı konuşuyordu.
+            if self._quiet_hours() and now.hour < self.cfg.get("morning_greeting_from_hour", 6):
+                log.info("Açılış selamı sessiz saatte atlandı (saat %02d).", now.hour)
+                return
+
+            greeted = ""
+            if os.path.exists(self.greet_file):
+                with open(self.greet_file) as fh:
+                    greeted = fh.read().strip()
             if greeted != today.isoformat():
-                open(self.greet_file, "w").write(today.isoformat())
+                # Damga yalnızca gerçekten selam verildiğinde yazılır; aksi hâlde
+                # sessiz saat bittiğinde ana döngü selamı veremezdi.
+                with open(self.greet_file, "w") as fh:
+                    fh.write(today.isoformat())
                 greet = "Günaydın" if now.hour < 12 else "Tünaydın" if now.hour < 18 else "İyi akşamlar"
                 msg = f"{greet} {self.T}. Mek hazır."
                 log.info("Açılış anında selamlama yapılıyor: %s", msg)
@@ -1355,7 +1370,11 @@ class Mek:
 
                 def send_briefing():
                     try:
-                        self.notify(self.briefing(), urgent=True)
+                        # urgent=False: açılış brifingi acil bir güvenlik uyarısı
+                        # değil, bu yüzden sessiz saat ve konuşma aralığı
+                        # kurallarına uymalı. (urgent=True sessiz saati bilerek
+                        # aşar; o yalnızca güvenlik uyarıları içindir.)
+                        self.notify(self.briefing())
                     except Exception:
                         log.exception("Açılış brifingi hazırlanamadı")
 

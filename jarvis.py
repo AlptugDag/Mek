@@ -10,6 +10,7 @@ Lightweight, zero-load architecture.
 
 import sys
 import os
+import json
 import re
 import time
 import subprocess
@@ -23,8 +24,35 @@ import scipy.signal as signal
 import sounddevice as sd
 
 MEK_HOME = os.path.expanduser("~/.jarvis")
-TARGET_DEVICE_NAME = "mac studio"
-TARGET_VOLUME = 0.30  # %30 ses seviyesi
+
+
+def _user_setting(name, default):
+    """Kullanıcı ayarını jarvis.json'dan (yoksa eski config.json'dan) okur.
+
+    jarvis.py bağımsız bir süreç olarak çalıştığı için jarvisd/config.py'yi
+    içe aktarmaz; aynı öncelik sırasını burada da uygular.
+    """
+    for fname in ("jarvis.json", "config.json"):
+        try:
+            with open(os.path.join(MEK_HOME, fname), encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and name in data:
+                return data[name]
+        except Exception:
+            continue
+    return default
+
+
+# "system" (varsayılan): sesi macOS'un o anki varsayılan çıkış aygıtına verir,
+# yani kulaklık takılıysa kulaklığa. Eskiden burada "mac studio" sabit kodluydu
+# ve speech_device ayarı hiç okunmuyordu; Mek, varsayılan çıkışınız ne olursa
+# olsun dahili hoparlörden konuşuyordu.
+TARGET_DEVICE_NAME = str(_user_setting("speech_device", "system")).strip().lower()
+USE_SYSTEM_OUTPUT = TARGET_DEVICE_NAME in ("", "system", "default", "sistem", "varsayılan")
+try:
+    TARGET_VOLUME = max(0.0, min(1.0, float(_user_setting("speech_volume", 0.30))))
+except (TypeError, ValueError):
+    TARGET_VOLUME = 0.30
 SPEECH_SPEED = 1.08   # Çevik, tetikte ve net bir asistan ritmi
 
 TURKISH_MONTHS = [
@@ -52,7 +80,13 @@ def get_mac_studio_devices():
     Genel sistem ses aygıtına dokunmadan:
     1. CoreAudio Device ID'sini bulur (doğrudan donanım sesini ayarlamak için)
     2. sounddevice aygıt indexini bulur (doğrudan bu hoparlöre ses göndermek için)
+
+    speech_device "system" ise (varsayılan) hiçbir aygıt aranmaz: (None, None)
+    döner ve ses macOS'un varsayılan çıkışına gider.
     """
+    if USE_SYSTEM_OUTPUT:
+        return None, None
+
     addr = AudioObjectPropertyAddress(
         int.from_bytes(b"dev#", "big"),
         int.from_bytes(b"glob", "big"),
@@ -399,17 +433,26 @@ def speak(text: str):
         tts = EMA()
         speech = tts.say(text, speed=SPEECH_SPEED)
 
-        # Akustik ekolayzır uygula
-        audio_eq = apply_mac_studio_eq(speech.audio, fs=speech.sample_rate)
+        # Akustik ekolayzır yalnızca Mac Studio hoparlörüne özeldir; kulaklıkta
+        # ya da başka bir çıkışta sesi gereksiz yere renklendirir.
+        audio_eq = speech.audio if USE_SYSTEM_OUTPUT else apply_mac_studio_eq(
+            speech.audio, fs=speech.sample_rate)
 
         # Donanım ve medya durumu denetimi
         ca_id, sd_idx = get_mac_studio_devices()
-        orig_vol, orig_muted, other_media_playing = get_mac_studio_hw_status(ca_id)
+        orig_vol, orig_muted, other_media_playing = (
+            (1.0, False, False) if USE_SYSTEM_OUTPUT else get_mac_studio_hw_status(ca_id))
 
         # Kural: Başka bir medya oynatılıyorsa donanım ses seviyesine ASLA DOKUNULMAZ!
         # Ses, doğrudan dijital PCM sinyali üzerinde akıllıca ölçeklenir; böylece diğer medyanın sesi 1 dB bile değişmez.
         restoration_needed = False
-        if other_media_playing:
+        if USE_SYSTEM_OUTPUT:
+            # Varsayılan çıkış (kulaklık, hoparlör, ne seçiliyse) kullanıcınındır.
+            # Donanım ses seviyesine ASLA dokunulmaz, sessize alma durumu
+            # değiştirilmez; yalnızca Mek'in kendi sinyali dijital olarak
+            # kısılır. Böylece klavyedeki ses tuşları tamamen sizde kalır.
+            audio_eq = (audio_eq * TARGET_VOLUME).astype(np.float32)
+        elif other_media_playing:
             effective_hw = max(0.05, orig_vol)
             digital_scale = min(1.0, TARGET_VOLUME / effective_hw)
             audio_eq = (audio_eq * digital_scale).astype(np.float32)
@@ -424,8 +467,13 @@ def speak(text: str):
                 audio_eq = (audio_eq * digital_scale).astype(np.float32)
 
         pct = int(TARGET_VOLUME * 100)
-        print(f"[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
-        print(f"[Mek] Doğrudan Mac Studio Hoparlörü üzerinden %{pct} ses seviyesinde çalınıyor...")
+        if USE_SYSTEM_OUTPUT:
+            print("[Mek] EMA Lightning sesi üretildi.")
+            print(f"[Mek] Sistemin varsayılan çıkışından %{pct} düzeyinde çalınıyor "
+                  "(donanım sesine dokunulmadı)...")
+        else:
+            print("[Mek] EMA Lightning sesi üretildi ve Mac Studio EQ uygulandı.")
+            print(f"[Mek] Doğrudan {TARGET_DEVICE_NAME} üzerinden %{pct} ses seviyesinde çalınıyor...")
 
         if sd_idx is not None:
             sd.play(audio_eq, samplerate=speech.sample_rate, device=sd_idx)

@@ -8,7 +8,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import contextlib
 import threading
+import types
 import unittest
 from unittest.mock import patch
 
@@ -17,6 +19,31 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "jarvisd"))
 import config  # noqa: E402
 import proc  # noqa: E402
 import security  # noqa: E402
+
+
+def _load_daemon_module():
+    """jarvisd/jarvisd.py'yi açık dosya yolundan yükler.
+
+    Düz `import jarvisd`, sys.path sırasına göre `jarvisd/` DİZİNİNİ bir
+    ad alanı paketi olarak çözebiliyor; o zaman modülün içeriği bulunamıyor.
+    """
+    import importlib.util
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    spec = importlib.util.spec_from_file_location(
+        "mek_daemon_test", os.path.join(root, "jarvisd", "jarvisd.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_DAEMON = None
+
+
+def daemon_module():
+    global _DAEMON
+    if _DAEMON is None:
+        _DAEMON = _load_daemon_module()
+    return _DAEMON
 
 
 class SelfQuarantineTests(unittest.TestCase):
@@ -311,3 +338,161 @@ class RepoLayoutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuietHoursTests(unittest.TestCase):
+    """Açılış selamı sessiz saatleri hiç denetlemiyordu.
+
+    Servis gece yarısından sonra yeniden başladığında (ya da o gün ilk kez
+    çalıştığında) Mek sessiz saat olmasına rağmen sesli selam veriyordu.
+    Ayrıca açılış brifingi `urgent=True` ile gönderildiği için o da sessiz
+    saati aşıyordu.
+    """
+
+    @contextlib.contextmanager
+    def _at_hour(self, hour):
+        """jarvisd modülünün gördüğü saati sabitler (testler saate bağlı olmasın)."""
+        J = daemon_module()
+        import datetime as real_dt
+        frozen = real_dt.datetime(2026, 1, 1, hour, 30)
+
+        class FrozenDateTime(real_dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        class FrozenModule:
+            datetime = FrozenDateTime
+            date = real_dt.date
+            time = real_dt.time
+            timedelta = real_dt.timedelta
+
+        original = J.dt
+        J.dt = FrozenModule
+        try:
+            yield
+        finally:
+            J.dt = original
+
+    def _fake_mek(self, hour, greet_file):
+        J = daemon_module()
+        spoken, notified = [], []
+        fake = types.SimpleNamespace(
+            cfg={"quiet_start_hour": 0, "quiet_end_hour": 11,
+                 "morning_greeting_from_hour": 6},
+            greet_file=greet_file,
+            T="Alptuğ Bey",
+            speak=spoken.append,
+            briefing=lambda: "brifing metni",
+            notify=lambda text, **kw: notified.append((text, kw)),
+            _quiet_hours=lambda: 0 <= hour < 11,
+        )
+        return J.Mek._boot_greeting, fake, spoken, notified
+
+    def test_boot_greeting_is_silent_during_quiet_hours(self):
+        with tempfile.TemporaryDirectory() as d:
+            gf = os.path.join(d, "greeted")
+            boot, fake, spoken, _ = self._fake_mek(2, gf)   # gece 02:00
+            with self._at_hour(2):
+                boot(fake)
+            self.assertEqual(spoken, [], "sessiz saatte konuşmamalı")
+            self.assertFalse(os.path.exists(gf),
+                             "selam verilmediyse günlük damga da yazılmamalı")
+
+    def test_boot_greeting_speaks_outside_quiet_hours(self):
+        with tempfile.TemporaryDirectory() as d:
+            gf = os.path.join(d, "greeted")
+            boot, fake, spoken, _ = self._fake_mek(14, gf)  # öğleden sonra
+            with self._at_hour(14):
+                boot(fake)
+            self.assertEqual(len(spoken), 1)
+            self.assertIn("Mek hazır", spoken[0])
+            self.assertTrue(os.path.exists(gf))
+
+    def test_boot_greeting_allowed_in_morning_window(self):
+        # Sessiz saat 0-11 ama morning_greeting_from_hour=6: 08:00'de selam serbest.
+        with tempfile.TemporaryDirectory() as d:
+            boot, fake, spoken, _ = self._fake_mek(8, os.path.join(d, "greeted"))
+            with self._at_hour(8):
+                boot(fake)
+            self.assertEqual(len(spoken), 1)
+
+    def test_boot_briefing_is_not_marked_urgent(self):
+        """urgent=True sessiz saati bilerek aşar; brifing güvenlik uyarısı değil."""
+        with tempfile.TemporaryDirectory() as d:
+            boot, fake, _spoken, notified = self._fake_mek(14, os.path.join(d, "greeted"))
+            with self._at_hour(14):
+                boot(fake)
+            for _ in range(50):
+                if notified:
+                    break
+                time.sleep(0.05)
+            self.assertTrue(notified, "açılış brifingi gönderilmeliydi")
+            self.assertFalse(notified[0][1].get("urgent", False),
+                             "açılış brifingi urgent olmamalı")
+
+    def test_greeting_runs_only_once_a_day(self):
+        with tempfile.TemporaryDirectory() as d:
+            gf = os.path.join(d, "greeted")
+            boot, fake, spoken, _ = self._fake_mek(14, gf)
+            with self._at_hour(14):
+                boot(fake)
+                boot(fake)
+            self.assertEqual(len(spoken), 1)
+
+
+class SpeechOutputDeviceTests(unittest.TestCase):
+    """Ses, varsayılan çıkış yerine dahili hoparlöre zorlanıyordu.
+
+    jarvis.py içinde `TARGET_DEVICE_NAME = "mac studio"` sabit kodluydu ve
+    `speech_device` ayarı hiç okunmuyordu; kulaklık takılı olsa bile Mek
+    Mac Studio hoparlöründen konuşuyor, üstelik donanım ses seviyesini
+    değiştirebiliyordu.
+    """
+
+    @staticmethod
+    def _load(home):
+        import importlib.util
+        root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        spec = importlib.util.spec_from_file_location(
+            "mek_speak_test", os.path.join(root, "jarvis.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mod.MEK_HOME = home
+        return mod
+
+    def test_default_is_system_output(self):
+        import config as cfgmod
+        self.assertEqual(cfgmod.DEFAULTS["speech_device"], "system")
+
+    def test_system_output_skips_device_lookup(self):
+        mod = self._load("/nonexistent")
+        mod.USE_SYSTEM_OUTPUT = True
+        self.assertEqual(mod.get_mac_studio_devices(), (None, None),
+                         "varsayılan çıkışta hiçbir aygıt aranmamalı")
+
+    def test_user_setting_is_read_from_jarvis_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "jarvis.json"), "w") as fh:
+                json.dump({"speech_device": "mac studio", "speech_volume": 0.7}, fh)
+            mod = self._load(d)
+            self.assertEqual(mod._user_setting("speech_device", "system"), "mac studio")
+            self.assertEqual(mod._user_setting("speech_volume", 0.3), 0.7)
+
+    def test_user_setting_falls_back_to_legacy_config_json(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "config.json"), "w") as fh:
+                json.dump({"speech_volume": 0.5}, fh)
+            mod = self._load(d)
+            self.assertEqual(mod._user_setting("speech_volume", 0.3), 0.5)
+
+    def test_user_setting_default_when_nothing_configured(self):
+        with tempfile.TemporaryDirectory() as d:
+            mod = self._load(d)
+            self.assertEqual(mod._user_setting("speech_device", "system"), "system")
+
+    def test_named_device_still_supported(self):
+        mod = self._load("/nonexistent")
+        self.assertFalse(
+            "mac studio" in ("", "system", "default", "sistem", "varsayılan"),
+            "adı verilen bir aygıt sistem varsayılanı sayılmamalı")

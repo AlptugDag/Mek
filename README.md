@@ -14,15 +14,17 @@
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.1.2:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
+> **v0.0.1.3:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
 > artık App Intents ile macOS'un kendi Siri dizinine kaydoluyor: 8 intent, 23 Türkçe
 > cümle, sesle ve "Siri'ye Yazın" ile. Kestirmeler (Shortcuts) uygulamasında hiçbir şey
 > kurmanız gerekmiyor. Tam Xcode gerektirmeyen App Intents meta veri üreticisi
 > ([`bin/appintents_metadata.py`](bin/appintents_metadata.py)) eklendi. Ayrıca kapsamlı
 > hata ayıklama: Mek'in kendi launchd servisini karantinaya alıp kendini kapattığı
 > kritik hata, durum dosyalarındaki yarış koşulu, zaman aşımsız alt süreç çağrıları,
-> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (126 test).
-> Önceki sürümler: [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
+> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (137 test).
+> Ayrıca sesli bildirimler artık sistemin varsayılan ses çıkışını (kulaklık dahil)
+> kullanıyor ve sessiz saatler açılış selamı ile brifingi de kapsıyor.
+> Önceki sürümler: [`v0.0.1.2`](https://github.com/AlptugDag/Mek/tree/v0.0.1.2), [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -53,10 +55,26 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
 - **İsteğe bağlı Gemini:** Apple Intelligence yetmezse ya da soruya `derin` ile başlarsanız Gemini kullanılır. Bunun için `~/.jarvis/jarvis.json` içine `"gemini_api_key": "..."` ekleyin (`chmod 600`; isteğe bağlı `"gemini_model"`). Gemini'ye yalnızca sorunuz, kısa durum özeti ve araç çıktıları gönderilir. Anahtar yoksa bulut hiç kullanılmaz.
 - **Sesle sorma:** Mikrofon sürekli dinlemez; yalnızca menüdeki "Sesle sor" tıklanınca en fazla 8 saniye açılır, çözümleme cihaz üzerinde yapılır.
 
-## Akıllı Seslendirme ve Mac Studio Hoparlörü
-- **Doğrudan Mac Studio Hoparlörü:** Mek tüm sesli bilgilendirmelerini kulaklık ya da harici monitör ses ayarlarından bağımsız olarak doğrudan Mac Studio'nun dahili hoparlörü üzerinden gerçekleştirir.
-- **Oynatılan Medyayı Bölmeyen %30 Ses Seviyesi:** Hoparlörde o an müzik, video veya başka bir medya oynatılıyorsa, sistemin donanım ses düzeyine ASLA dokunulmaz (medyanızın sesi kısılmaz ya da artmaz). Mek, kendi sesini dijital sinyal seviyesinde akıllıca ölçekleyerek hoparlörün net %30 seviyesine denk gelen berrak bir güçte duyurur.
-- **Günün İlk Karşılaması:** Sabah Alptuğ Bey masaya oturduğunda (ve hareket algılandığında), sessiz saat ayarından bağımsız olarak günaydın mesajı seslendirilir ve ardından günün ilk brifingi gelir.
+## Akıllı Seslendirme
+- **Sizin seçtiğiniz ses çıkışı (varsayılan):** Mek, macOS'un o anki varsayılan çıkış
+  aygıtından konuşur — kulaklık takılıysa kulaklıktan. Donanım ses seviyesine ve
+  sessize alma durumuna **hiç dokunmaz**; yalnızca kendi sinyalini `speech_volume`
+  düzeyine (varsayılan %30) dijital olarak kısar. Böylece klavyedeki ses tuşları
+  her zaman sizde kalır.
+- **Belirli bir hoparlöre sabitleme (isteğe bağlı):** `~/.jarvis/jarvis.json` içine
+  `"speech_device": "mac studio"` yazarsanız Mek varsayılan çıkıştan bağımsız olarak
+  o aygıttan konuşur ve Mac Studio hoparlörüne özel akustik EQ'yu uygular. Bu kipte,
+  hoparlörde başka bir medya çalıyorsa donanım ses düzeyine yine dokunulmaz; Mek
+  kendi sesini dijital olarak ölçekler.
+- **Ses düzeyi:** `"speech_volume": 0.30` (0.0–1.0 arası).
+- **Sessiz saatler:** `quiet_start_hour`–`quiet_end_hour` (varsayılan 00:00–11:00)
+  arasında Mek kendiliğinden konuşmaz. Buna açılış selamı ve açılış brifingi de
+  dâhildir. Sessiz saatte yalnızca **acil güvenlik uyarıları** seslendirilir.
+  Sizin verdiğiniz komutların yanıtları (`mek piyasa ...` gibi) sessiz saatten
+  etkilenmez; onları siz istediniz.
+- **Günün İlk Karşılaması:** `morning_greeting_from_hour` (varsayılan 06:00)
+  saatinden sonra, sessiz saat sürüyor olsa bile günaydın mesajı seslendirilir ve
+  günün ilk brifingi gelir. Bu saatten önce selam verilmez.
 
 ## Dinamik Bellek Bütçesi ve Kurgu Optimizasyonu
 - **Akıllı Kaynak Dağıtımı:** Premiere Pro, Photoshop, DaVinci Resolve ve Topaz Video gibi ağır uygulamalar aynı anda açık olsa bile bilgisayarın kasmaması için bellek bütçesi (`memory_budget.py`) açık uygulama sayısına göre otomatik kalibre edilir. Hiçbir uygulama tek başına tüm RAM'i işgal edip sistemi takas (swap) krizine sokamaz.
