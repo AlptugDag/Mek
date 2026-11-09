@@ -1234,10 +1234,11 @@ class Mek:
             self.speak(text)
             return text
         if c.startswith("temizle"):
-            tier = "haftalik" if "derin" in c else "gunluk"
-            if self.snap and self.snap.pro_pids:
-                return "Kurgu programı açıkken temizlik yapmıyorum."
+            tier = "haftalik" if any(k in c for k in ("derin", "haftalik", "kalıntı", "kalinti")) else "gunluk"
+            has_pro = bool(self.snap and self.snap.pro_pids)
             self.start_clean(tier)
+            if has_pro:
+                return f"{'Derin' if tier == 'haftalik' else 'Günlük'} temizlik başladı. Kurgu programı açık olduğu için aktif proje önbellekleri korunarak sistem, uygulama ve kalıntılar temizleniyor."
             return f"{'Derin' if tier == 'haftalik' else 'Günlük'} temizlik başladı, bitince haber vereceğim."
         if c.startswith("sus"):
             mins = int(re.findall(r"\d+", c)[0]) if re.findall(r"\d+", c) else 60
