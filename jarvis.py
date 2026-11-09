@@ -260,8 +260,10 @@ def apply_mac_studio_eq(audio, fs=48000):
     return out.astype(np.float32)
 
 
-def is_quiet_hours(now: datetime.datetime) -> bool:
+def is_quiet_hours(now: datetime.datetime = None) -> bool:
     """Gece 00:00 ile sabah 11:00 arası kesin sessiz saatler."""
+    if now is None:
+        now = datetime.datetime.now()
     return 0 <= now.hour < 11
 
 
@@ -444,7 +446,11 @@ def normalize_phonetics(text: str) -> str:
     return text
 
 
-def speak(text: str):
+def speak(text: str, force: bool = False):
+    now = datetime.datetime.now()
+    if is_quiet_hours(now) and not force:
+        print(f"[Mek] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma engellendi.")
+        return
     text = normalize_phonetics(text)
     print(f"[Mek] Sentezleniyor: {text}")
     try:
@@ -524,27 +530,27 @@ def main():
     parser.add_argument("--force", action="store_true", help="Sessiz saat kontrolünü atla")
     args = parser.parse_args()
 
+    now = datetime.datetime.now()
+
+    # Sessiz saatler (00:00 - 11:00): --force verilmediği sürece hiçbir konuşma yapılmaz
+    if is_quiet_hours(now) and not args.force:
+        print(f"[Mek] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma iptal edildi.")
+        sys.exit(0)
+
     # Zamanlayıcı modu: mek --timer 30 "Mola bitti Alptuğ Bey"
     if args.timer:
         minutes = args.timer
         msg = " ".join(args.text) if args.text else f"Alptuğ Bey, {minutes} dakikalık süreniz doldu efendim."
         print(f"[Mek] Zamanlayıcı kuruldu: {minutes} dakika sonra konuşulacak.")
         time.sleep(minutes * 60)
-        speak(msg)
+        speak(msg, force=args.force)
         return
 
     # Doğrudan özel metin verilmişse: mek "Mesaj"
     if args.text and not args.periodic:
         custom_message = " ".join(args.text)
-        speak(custom_message)
+        speak(custom_message, force=args.force)
         return
-
-    now = datetime.datetime.now()
-
-    # Sessiz saatler (00:00 - 11:00)
-    if is_quiet_hours(now) and not args.force:
-        print(f"[Mek] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma iptal edildi.")
-        sys.exit(0)
 
     # Periyodik mod: kullanıcı bilgisayar başında değilse (idle > 10 dk) boş odaya konuşmaz
     if args.periodic:
@@ -556,7 +562,7 @@ def main():
         # Standart başlangıç brifingi
         message = build_startup_message()
 
-    speak(message)
+    speak(message, force=args.force)
 
 
 if __name__ == "__main__":

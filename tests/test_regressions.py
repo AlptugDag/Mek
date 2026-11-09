@@ -3,6 +3,7 @@
 
 Her test sınıfı, gerçekten yaşanmış somut bir arızayı kilitler.
 """
+import datetime as dt
 import json
 import os
 import subprocess
@@ -379,7 +380,7 @@ class QuietHoursTests(unittest.TestCase):
         spoken, notified = [], []
         fake = types.SimpleNamespace(
             cfg={"quiet_start_hour": 0, "quiet_end_hour": 11,
-                 "morning_greeting_from_hour": 6},
+                 "morning_greeting_from_hour": 11},
             greet_file=greet_file,
             T="Alptuğ Bey",
             speak=spoken.append,
@@ -399,6 +400,17 @@ class QuietHoursTests(unittest.TestCase):
             self.assertFalse(os.path.exists(gf),
                              "selam verilmediyse günlük damga da yazılmamalı")
 
+    def test_boot_greeting_silent_at_six_and_eight_am(self):
+        # 00:00 - 11:00 arası kesin sessiz saattir: sabah 6 ve 8'de konuşmamalı
+        for h in (6, 8):
+            with tempfile.TemporaryDirectory() as d:
+                gf = os.path.join(d, "greeted")
+                boot, fake, spoken, _ = self._fake_mek(h, gf)
+                with self._at_hour(h):
+                    boot(fake)
+                self.assertEqual(spoken, [], f"saat {h}:00 sessiz saat içindedir, konuşmamalı")
+                self.assertFalse(os.path.exists(gf))
+
     def test_boot_greeting_speaks_outside_quiet_hours(self):
         with tempfile.TemporaryDirectory() as d:
             gf = os.path.join(d, "greeted")
@@ -409,13 +421,16 @@ class QuietHoursTests(unittest.TestCase):
             self.assertIn("Mek hazır", spoken[0])
             self.assertTrue(os.path.exists(gf))
 
-    def test_boot_greeting_allowed_in_morning_window(self):
-        # Sessiz saat 0-11 ama morning_greeting_from_hour=6: 08:00'de selam serbest.
+    def test_boot_greeting_speaks_at_eleven_am(self):
+        # 11:00'de sessiz saat biter, selamlama serbesttir
         with tempfile.TemporaryDirectory() as d:
-            boot, fake, spoken, _ = self._fake_mek(8, os.path.join(d, "greeted"))
-            with self._at_hour(8):
+            gf = os.path.join(d, "greeted")
+            boot, fake, spoken, _ = self._fake_mek(11, gf)
+            with self._at_hour(11):
                 boot(fake)
             self.assertEqual(len(spoken), 1)
+            self.assertIn("Mek hazır", spoken[0])
+            self.assertTrue(os.path.exists(gf))
 
     def test_boot_briefing_is_not_marked_urgent(self):
         """urgent=True sessiz saati bilerek aşar; brifing güvenlik uyarısı değil."""
@@ -439,6 +454,62 @@ class QuietHoursTests(unittest.TestCase):
                 boot(fake)
                 boot(fake)
             self.assertEqual(len(spoken), 1)
+
+    def test_observe_greeting_silent_during_quiet_hours(self):
+        """observe döngüsü sabah 06:00'da kullanıcı aktif olsa bile selam vermemeli."""
+        J = daemon_module()
+        with tempfile.TemporaryDirectory() as d:
+            gf = os.path.join(d, "greeted")
+            spoken = []
+            fake_mek = types.SimpleNamespace(
+                cfg={"quiet_start_hour": 0, "quiet_end_hour": 11, "away_threshold_s": 1200,
+                     "morning_greeting_from_hour": 11},
+                greet_file=gf,
+                T="Alptuğ Bey",
+                speak=spoken.append,
+                notify=lambda *a, **kw: None,
+                briefing=lambda: "brifing",
+                renders=types.SimpleNamespace(update=lambda *a: []),
+                was_away=False,
+                away_events=[],
+                warned={},
+                _quiet_hours=lambda: True,
+            )
+            # Saat 06:00, kullanıcı başında (idle=0)
+            fake_snap = types.SimpleNamespace(t=dt.datetime(2026, 11, 9, 6, 0, 12), idle=0,
+                                              render_cpu={}, pro_pids=[], disk_free_gb=100,
+                                              thermal=0, swap_gb=0, top_mem=[])
+            J.Mek.observe(fake_mek, fake_snap)
+            self.assertEqual(spoken, [], "06:00'da sessiz saatte selam verilmemeli")
+            self.assertFalse(os.path.exists(gf))
+
+    def test_observe_greeting_triggers_at_eleven_am(self):
+        """observe döngüsü 11:00 olduğunda kullanıcı aktifse selam vermeli."""
+        J = daemon_module()
+        with tempfile.TemporaryDirectory() as d:
+            gf = os.path.join(d, "greeted")
+            spoken = []
+            fake_mek = types.SimpleNamespace(
+                cfg={"quiet_start_hour": 0, "quiet_end_hour": 11, "away_threshold_s": 1200,
+                     "morning_greeting_from_hour": 11},
+                greet_file=gf,
+                T="Alptuğ Bey",
+                speak=spoken.append,
+                notify=lambda *a, **kw: None,
+                briefing=lambda: "brifing",
+                renders=types.SimpleNamespace(update=lambda *a: []),
+                was_away=False,
+                away_events=[],
+                warned={},
+                _quiet_hours=lambda: False,
+            )
+            fake_snap = types.SimpleNamespace(t=dt.datetime(2026, 11, 9, 11, 0, 1), idle=0,
+                                              render_cpu={}, pro_pids=[], disk_free_gb=100,
+                                              thermal=0, swap_gb=0, top_mem=[])
+            J.Mek.observe(fake_mek, fake_snap)
+            self.assertEqual(len(spoken), 1)
+            self.assertIn("Günaydın", spoken[0])
+            self.assertTrue(os.path.exists(gf))
 
 
 class SpeechOutputDeviceTests(unittest.TestCase):

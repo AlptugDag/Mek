@@ -258,12 +258,18 @@ class Mek:
         return bool(s and s.idle > self.cfg["away_threshold_s"])
 
     def _quiet_hours(self):
+        cfg = getattr(self, "cfg", None) or {}
+        q_start = cfg.get("quiet_start_hour", 0)
+        q_end = cfg.get("quiet_end_hour", 11)
         h = dt.datetime.now().hour
-        return self.cfg["quiet_start_hour"] <= h < self.cfg["quiet_end_hour"]
+        return q_start <= h < q_end
 
-    def speak(self, text):
+    def speak(self, text, force=False):
         """Speak requests in FIFO order so startup greetings cannot be overtaken."""
         if not text or not text.strip():
+            return
+        if self._quiet_hours() and not force:
+            log.info("Sessiz saatte konuşma engellendi (saat %02d): %s", dt.datetime.now().hour, text[:60])
             return
         text = re.sub(r"\bApple\b", "Epıl", text)
         text = re.sub(r"\bapple\b", "epıl", text)
@@ -300,11 +306,16 @@ class Mek:
         subprocess.run(["osascript", "-e", f'display notification {json.dumps(text)} with title {json.dumps(title)}'],
                        capture_output=True)
         to_say = spoken_text or text
-        if self._speech_blocked() and not (urgent and not self._quiet_hours()):
+        # Sessiz saatlerde (00:00 - 11:00) sesli konuşma yapılmaz
+        if self._quiet_hours():
             if self.snap and self.snap.idle > self.cfg["away_threshold_s"]:
                 self.away_events.append(to_say)
             return
-        if not urgent and (self._quiet_hours() or time.time() - self.last_spoke < self.cfg["proactive_min_gap_s"]):
+        if self._speech_blocked() and not urgent:
+            if self.snap and self.snap.idle > self.cfg["away_threshold_s"]:
+                self.away_events.append(to_say)
+            return
+        if not urgent and time.time() - self.last_spoke < self.cfg["proactive_min_gap_s"]:
             return
         self.last_spoke = time.time()
         self.speak(to_say)
@@ -564,12 +575,14 @@ class Mek:
         away = s.idle > self.cfg["away_threshold_s"]
 
         # Günün ilk selamı: Alptuğ Bey masaya oturduğunda (away değilken)
-        # sessiz saatte dahi olsa sabah saatlerinde (>= morning_greeting_from_hour) söylenir
+        # yalnızca sessiz saatler bittikten (11:00) sonra söylenir
         greeted = open(self.greet_file).read().strip() if os.path.exists(self.greet_file) else ""
-        is_morning = now.hour >= self.cfg.get("morning_greeting_from_hour", 6)
-        can_greet = not away and (not self._quiet_hours() or is_morning)
+        min_hour = max(self.cfg.get("morning_greeting_from_hour", 11), self.cfg.get("quiet_end_hour", 11))
+        is_morning = now.hour >= min_hour
+        can_greet = not away and not self._quiet_hours() and is_morning
         if can_greet and greeted != today.isoformat():
-            open(self.greet_file, "w").write(today.isoformat())
+            with open(self.greet_file, "w") as fh:
+                fh.write(today.isoformat())
             greet = "Günaydın" if now.hour < 12 else "Tünaydın" if now.hour < 18 else "İyi akşamlar"
             self.speak(f"{greet} {self.T}. Mek hazır.")
 
@@ -1346,11 +1359,9 @@ class Mek:
             now = dt.datetime.now()
             today = dt.date.today()
 
-            # Sessiz saatlere açılış selamı da uyar. Eskiden bu denetim yalnızca
-            # ana döngüdeki selamlamada vardı; servis sessiz saatte yeniden
-            # başladığında (ya da gece yarısından sonra ilk kez çalıştığında)
-            # Mek gecenin bir yarısı konuşuyordu.
-            if self._quiet_hours() and now.hour < self.cfg.get("morning_greeting_from_hour", 6):
+            # Sessiz saatlerde (00:00 - 11:00) açılış selamı kesinlikle verilmez.
+            # Selam yalnızca 11:00 - 00:00 saatleri arasında verilebilir.
+            if self._quiet_hours():
                 log.info("Açılış selamı sessiz saatte atlandı (saat %02d).", now.hour)
                 return
 

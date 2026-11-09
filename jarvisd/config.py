@@ -26,7 +26,7 @@ DEFAULTS = {
     "ups_shutdown_percent": 15,
     "ups_shutdown_minutes": 5,
     "event_alert_min": 10,
-    "morning_greeting_from_hour": 6,  # günün ilk selamı: siz başındaysanız bu saatten sonra sessiz saatte de söylenir
+    "morning_greeting_from_hour": 11, # günün ilk selamı: yalnızca sessiz saatler bittikten (11:00) sonra verilir
     "speech_volume": 0.30,            # tüm seslendirmeler bu düzeye dijital olarak kısılır
     # Mek daima dahili hoparlörden konuşur; konuşma boyunca hoparlörün donanım
     # sesi speech_volume düzeyine sabitlenir ve hemen ardından sizin
