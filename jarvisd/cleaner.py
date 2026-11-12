@@ -43,7 +43,8 @@ PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H("Movies/
 # Sistemin ya da açık indirmelerin ihtiyaç duyduğu önbellekler
 SKIP_CACHE = re.compile(r"^(com\.apple\.(nsurlsessiond|bird|akd|CloudKit|cloudd|HomeKit|appstore|"
                         r"SoftwareUpdate|containermanagerd|ap\.adprivacyd|Spotlight)|CloudKit|"
-                        r"com\.apple\.icloud|Homebrew/downloads/.*incomplete)")
+                        r"com\.apple\.icloud|Homebrew/downloads/.*incomplete|"
+                        r"DeepFilterNet)")   # DeepFilterNet keeps its model here: a model, not a cache
 
 
 # Kalıntı taramasında daima korunacak sistem/üretici dizin adları
@@ -231,6 +232,42 @@ class Cleaner:
         self.age("Capture One önbelleği", H("Library/Caches/com.captureone*"), 14)
         self.age("Maxon/Red Giant önbelleği", H("Library/Caches/net.maxon*"), 14)
         self.age("Maxon/Red Giant önbelleği", H("Library/Application Support/Maxon/*/cache"), 14)
+
+    def yapay_zeka(self):
+        """Alptuguide yerel yapay zekâ yığınının YENİDEN OLUŞTURULABİLEN artıkları. Modeller (models/, ~/.cache/huggingface/hub,
+        ~/.ollama), ortamlar (envs/, venv/), öğrenilenler (style/, memory/), kütüphane ve kullanıcı ayarları ASLA silinmez."""
+        A = H("Library/Application Support/Alptuguide")
+        cat = "Yapay zekâ önbellekleri"
+        # yarım kalmış indirmeler: 3 günden eskiyse artık devam etmeyecek demektir (devam eden indirme dosyayı tazeler)
+        stale = time.time() - 3 * DAY
+        for pat in (os.path.join(A, "models", "**", "*.part"), os.path.join(A, "models", "**", ".cache", "huggingface", "download", "*.incomplete"),
+                    H(".cache/huggingface/hub/**/*.incomplete")):
+            for p in glob.glob(pat, recursive=True):
+                try:
+                    if os.path.isfile(p) and os.lstat(p).st_mtime < stale:
+                        self._rm_file(p, cat)
+                except OSError:
+                    pass
+        # Xet parça önbelleği (indirme sırasında kullanılır, model dosyalarından ayrı): 7 gün
+        xet = H(".cache/huggingface/xet")
+        limit = time.time() - (0 if self.is_deep else 7 * DAY)
+        for dp, dn, fn in os.walk(xet, topdown=False):
+            for f in fn:
+                p = os.path.join(dp, f)
+                try:
+                    if os.lstat(p).st_mtime < limit:
+                        self._rm_file(p, cat)
+                except OSError:
+                    pass
+        self.age(cat, os.path.join(A, "envs", "logs"), 14)            # kurulum/öğrenme kayıtları
+        self.age(cat, os.path.join(A, "previews"), 14)                 # panel önizlemeleri
+        self.age(cat, os.path.join(A, "captions"), 30)                 # 3B altyazı iş dosyaları
+        self.age(cat, os.path.join(A, "cache"), 30)                    # Remotion paket önbelleği vb. (kendini yeniden kurar)
+        self.age(cat, os.path.join(A, "knowledge", "web"), 90)         # web literatür notları (yeniden aranabilir)
+        self.age(cat, os.path.join(A, "downloads"), 7)                 # tamamlanmış kurulum indirmeleri
+        self.age(cat, os.path.join(A, "ext", "earshot-venv", "**", "__pycache__"), 30)
+        for d in glob.glob(H("Library/Application Support/Adobe/CEP/extensions/com.alptug.alptuguide/**/__pycache__"), recursive=True):
+            self.age(cat, d, 30)
 
     def uygulamalar(self):
         # Genel kullanıcı önbellekleri: her uygulama klasörü ayrı; açık uygulamalar ve sistemin ihtiyaç duyduğu
@@ -488,6 +525,7 @@ def main():
     start_free = free_bytes()
     c = Cleaner(dry=a.dry_run, scale=0.35 if a.tier == "acil" else 1.0, tier=a.tier)
     c.kurgu()
+    c.yapay_zeka()
     c.uygulamalar()
     if a.tier in ("haftalik", "acil"):
         c.gelistirici()
