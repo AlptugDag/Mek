@@ -10,22 +10,28 @@
   <br><br>
   <img src="https://img.shields.io/badge/macOS-26%2B-black" alt="macOS 26+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-M1%E2%80%93M5-blue" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/version-0.0.1.0-green" alt="v0.0.1.0">
+  <img src="https://img.shields.io/badge/version-0.0.2.0-green" alt="v0.0.2.0">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
 </p>
 
-> **v0.0.1.4:** **Kestirmeler olmadan doğrudan Siri entegrasyonu.** Mek'in komutları
-> artık App Intents ile macOS'un kendi Siri dizinine kaydoluyor: 8 intent, 23 Türkçe
-> cümle, sesle ve "Siri'ye Yazın" ile. Kestirmeler (Shortcuts) uygulamasında hiçbir şey
-> kurmanız gerekmiyor. Tam Xcode gerektirmeyen App Intents meta veri üreticisi
-> ([`bin/appintents_metadata.py`](bin/appintents_metadata.py)) eklendi. Ayrıca kapsamlı
-> hata ayıklama: Mek'in kendi launchd servisini karantinaya alıp kendini kapattığı
-> kritik hata, durum dosyalarındaki yarış koşulu, zaman aşımsız alt süreç çağrıları,
-> süreç sızıntıları ve kimlik doğrulamasız yerel HTTP köprüsü giderildi (139 test).
-> Ayrıca sessiz saatler artık açılış selamı ile brifingi de kapsıyor ve Mek'in sesi
-> klavyedeki ses tuşlarından etkilenmiyor: konuşma boyunca hoparlörün donanım düzeyi
-> %30'a sabitlenip hemen ardından sizin bıraktığınız değere geri alınıyor.
-> Önceki sürümler: [`v0.0.1.3`](https://github.com/AlptugDag/Mek/tree/v0.0.1.3), [`v0.0.1.2`](https://github.com/AlptugDag/Mek/tree/v0.0.1.2), [`v0.0.1.1`](https://github.com/AlptugDag/Mek/tree/v0.0.1.1), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0), [`v0.0.0.9`](https://github.com/AlptugDag/Mek/tree/v0.0.0.9).
+> **v0.0.2.0:** **Saf Performans, Donanım Ömrü ve Doğrudan Apple Foundation Models Entegrasyonu.**
+> Mek artık gereksiz proje yedekleme (Proje Zaman Makinesi) ve kaba kurgu / LUT / viral hook otomasyon
+> yüklerinden tamamen arındırılarak tek bir hedefe odaklandı: **Apple Silicon Mac'in ve tüm uygulamaların
+> en üst performansı ile donanım ömrünü sıfır gereksiz yükle korumak.**
+> - **Apple Foundation Models (Cihaz İçi LLM):** `DynamicGenerationSchema` ile donanım-kısıtlı
+>   yapılandırılmış araç çağırma (`--mode agent`), performans & donanım ömrü stres danışmanı
+>   (`--mode advisor` + `mek analiz`), seçenek sınıflandırma (`--mode classify`) ve sıfır ek RAM yükü.
+> - **Sıfır Gidip-Gelme (Zero-Thrash) QoS & Birleşik Bellek Ayarı:** Premiere Pro/AE/Resolve/Topaz
+>   için çift havuzlama (OOM) önleyen Apple Silicon Metal ayarları, CoreAudio 1024 blok boyutu,
+>   kaçak `CEPHtmlEngine` (>%15 CPU) ve `MxContentService` E-çekirdek yalıtımı, tek uygulamalı odak
+>   geçişlerinde sıfır `taskpolicy` sarsıntısı.
+> - **Donanım Ömrü Koruması:** IOKit AppleSMC üzerinden gerçek zamanlı CPU, GPU, **NVMe NAND SSD**
+>   (`TH0a/TH0b/TH0x`) ve **PSU/Kasa** (`Tp0C`) sıcaklık koruması, 1100 RPM güvenli fan tabanı,
+>   400 GB/s Ultra-Scratch RAM-Disk ile SSD TBW aşınma kalkanı (aktif çalışma sırasında sıfır rsync
+>   çakışması ve veri kayıpsız ayna koruması), dinamik bellek bütçesi + yerel Ollama RAM koordinatörü.
+> - **Canlı Menü Çubuğu & Doğrudan Siri:** Menü çubuğunda canlı CPU/GPU/RAM/Takas, sıcaklık, fan RPM,
+>   RAM-Disk ve Apple Foundation Models durumu ile tek tıkla optimizasyon ve AI analizi.
+> Önceki sürümler: [`v0.0.1.4`](https://github.com/AlptugDag/Mek/tree/v0.0.1.4), [`v0.0.1.3`](https://github.com/AlptugDag/Mek/tree/v0.0.1.3), [`v0.0.1.2`](https://github.com/AlptugDag/Mek/tree/v0.0.1.2), [`v0.0.1.0`](https://github.com/AlptugDag/Mek/tree/v0.0.1.0).
 
 *English summary: an always-on background daemon for Apple Silicon Macs. It keeps performance, health, storage
 and security at their best with no user input, and proactively speaks Turkish updates (calendar, markets,
@@ -78,33 +84,14 @@ Ses [EMA Lightning](https://huggingface.co/canberkkkkkk/ema-lightning) ile ayrı
   saatinden sonra, sessiz saat sürüyor olsa bile günaydın mesajı seslendirilir ve
   günün ilk brifingi gelir. Bu saatten önce selam verilmez.
 
-## Dinamik Bellek Bütçesi ve Kurgu Optimizasyonu
-- **Akıllı Kaynak Dağıtımı:** Premiere Pro, Photoshop, DaVinci Resolve ve Topaz Video gibi ağır uygulamalar aynı anda açık olsa bile bilgisayarın kasmaması için bellek bütçesi (`memory_budget.py`) açık uygulama sayısına göre otomatik kalibre edilir. Hiçbir uygulama tek başına tüm RAM'i işgal edip sistemi takas (swap) krizine sokamaz.
-- **Sıfır Gecikmeli (<15 ms) Odak Geçişi ve E-Çekirdek Parkı:** Menü çubuğu uygulaması macOS `NSWorkspace` uygulama geçişlerini anında yakalar ve yerel Unix soketi üzerinden servise bildirir. `Cmd+Tab` ile Premiere Pro, Photoshop veya Topaz arasında geçiş yaptığınız anda:
-  - Öne gelen uygulama anında arka plan kısıtından çıkarılır ve tüm **8 Performans çekirdeği (P-core)** ile en yüksek G/Ç önceliği ona tahsis edilir.
-  - Arka planda kalan ve o an aktif render yapmayan diğer ağır uygulamalar **Verimlilik çekirdeklerine (E-core)** ve arka plan G/Ç katmanına park edilir; böylece boşta çalışan kurgu uygulamaları ön plandaki çalışmanızdan P-çekirdeği veya bellek bant genişliği çalamaz.
-- **Adobe CEP / Eklenti ve Eşitleme Dizginleme:** Premiere Pro ve After Effects'in arka planda açtığı onlarca `CEPHtmlEngine` (Chromium eklenti paneli), `AdobeIPCBroker`, `CCXProcess` ve `Core Sync` süreci otomatik olarak Verimlilik çekirdeklerine (`taskpolicy -b`) ve düşük önceliğe (`nice +15`) sabitlenir.
-- **Sıfır Sömürü (Non-Parasitic Tarama):** Süreçlerin değişmeyen yol/argüman bilgileri `(pid, create_time)` anahtarıyla önbelleklenir ve tüm modüller tek geçişli anlık görüntüyü paylaşır (`<%0.3` CPU tüketimi).
-- **Bellek Rahatlatma (Memory Relief):** Uygulamalar arası geçişte veya bellek baskısı yükseldiğinde inaktif dosya önbelleği (`purge`) otomatik temizlenir. Arka planda uzun süredir hareketsiz kalıp gigabaytlarca RAM tutan bir uygulama varsa Mek nazikçe kapatma önerisi sorar.
-
-## Apple Intelligence Vision, Sinematik Renk & Otonom Kurgu Motoru
-Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzerindeki Apple Intelligence (`FoundationModels`) ve Vision motoru ile tek merkezden yönetilir:
-- **Neural Conductor (Yapay Zekâ Orkestratörü):** Donanım telemetrisi (CPU, GPU, bellek basıncı, takas, termal profil) ile açık kurgu yazılımlarının durumunu tek geçişte analiz eder. Çoklu eylemleri anında planlar ve icra eder.
-- **Sinematik Renk Derecelendirme & Film Emülasyonu (3D .cube LUT):**
-  - `mek kurgu renk <film>`: İstediğiniz filmin ikonik renk paletini (*The Matrix, Blade Runner 2049, Oppenheimer, Amélie, Dune, Seven / Fincher, Wes Anderson, The Godfather, Kodachrome 64, Film Noir*) 33x33x33 3D `.cube` LUT olarak anında üretir. Hem DaVinci Resolve (`~/Library/.../LUT/Mek`) hem de Premiere Pro Lumetri (`~/Library/.../LUTs/Creative`) dizinlerine doğrudan kaydeder; DaVinci açıksa aktif klibe otomatik atar.
-  - `mek kurgu klon <referans_görsel.jpg>`: Herhangi bir fotoğrafın veya film karesinin renk dağılımını (histogram ve renk momentleri) analiz ederek ona birebir uyan 3D LUT üretir.
-  - `mek kurgu efekt "<doğal dil tarifi>"`: Apple Intelligence'a tarif ettiğiniz atmosferi (*"rüya gibi yumuşak parıltı (bloom), nostaljik soluk renkler ve 35mm film greni"*) ayrıştırır; renk derecelendirmesi ve optik efekt bileşenlerini (bloom, halation, grain, vignette) sentezleyip kurgunuza entegre eder.
-- **Otonom Kaba Kurgu Motoru (FCPXML & CMX 3600 EDL):**
-  - `mek kurgu kaba <dosya_veya_klasör>`: Ham video veya ses kayıtlarını milisaniye hassasiyetli RMS algoritmasıyla tarar. Nefes ve ölü boşlukları akıllı ses tamponları (80 ms pre-pad, 120 ms post-pad ile harf yutulmasını önleyerek) temizler.
-  - Premiere Pro 2026, DaVinci Resolve Studio ve Final Cut Pro uyumlu standart **FCPXML** ve **CMX 3600 EDL** montaj çizelgesi oluşturur. DaVinci Resolve açıksa sekansı timeline'a otomatik yerleştirir.
-- **Pro Kurgu Ortam Yönetimi:**
-  - `mek kurgu durum`: Açık Premiere `.prproj` ve DaVinci Resolve Studio proje/timeline durumunu listeler.
-  - `mek kurgu optimize`: 400 GB/s Ultra-Scratch RAM-diskini bağlar, P-çekirdek önceliğini kilitler, fanı Akıllı Sessiz kipe alır ve inaktif RAM'i boşaltır.
-  - `mek kurgu render`: DaVinci Deliver render kuyruğunu başlatır.
-  - `mek kurgu export`: Premiere sekansını Media Encoder kuyruğuna gönderir.
-- **Menü Çubuğu ve Siri:** Menü çubuğuna eklenen `🎬 Video Kurgu (Apple Intelligence)` alt menüsü ve Siri sesli komutları ile renk derecelendirme, efekt sentezi ve kaba kurgu klavyesiz tetiklenir.
-- **Doğal Türkçe Fonetik ("Epıl"):** EMA Lightning TTS motoru, "Apple" kelimesini ve tamlamalarını (Apple Intelligence, Apple Studio vb.) yabancı aksan bozulması olmadan akıcı ve net bir şekilde **"Epıl"** olarak seslendirir.
-- **Siri Kilitlenme Kalkanı:** macOS 27 beta üzerinde çalışan Siri ve Siri AI süreçleri işlemci kaçak dizginleme kuralından tam muaf tutulur; arka plan QoS kısıtlamasına sokulmayarak yanıt vermeme hatası kesin olarak önlenir.
+## Dinamik Bellek Bütçesi, Performans ve Donanım Ömrü Motoru
+- **Akıllı Birleşik Bellek Dağıtımı (`memory_budget.py` + `llm_ram.py`):** Premiere Pro, After Effects, Media Encoder, Photoshop, DaVinci Resolve, Topaz Video ve yerel LLM'ler (Ollama/llama.cpp/MLX) aynı anda çalışırken 64 GB birleşik belleği dinamik kalibre eder; takas (swap) krizini ve SSD aşınmasını önler. Baskı yükseldiğinde boşta bekleyen Ollama modellerini temiz biçimde (`keep_alive: 0`) bellekten indirir.
+- **Sıfır Gidip-Gelme (<15 ms) Odak Geçişi ve Tier-0 Öncelik (`services.py`):** Menü çubuğu uygulaması macOS `NSWorkspace` geçişlerini anında servise iletir. Aktif profesyonel uygulamalar ve eklenti IPC servisleri **8 Performans çekirdeği (P-core)** + Tier-0 G/Ç önceliğinde tutulur; kaçak `CEPHtmlEngine` (>%15 CPU), `MxContentService`, `com.redgiant.uni.dashboard`, bulut senkronizasyonu ve Spotlight/medya indeksleyicileri E-çekirdeklere sabitlenir.
+- **Sürümden Bağımsız Uygulama Motoru İyileştiricisi (`app_tuner.py`):** Adobe (Premiere Pro, After Effects, Media Encoder, Audition, Photoshop), DaVinci Resolve ve Topaz Video kapalıyken Apple Silicon Birleşik Bellek için çift havuzlamayı önleyen Metal, dengeli decode kuyruğu, CoreAudio 1024 blok boyutu, Multi-Frame Rendering ve telemetri kapatma ayarlarını atomik olarak uygular.
+- **400 GB/s APFS Ultra-Scratch RAM-Disk & SSD Aşınma Kalkanı (`ultra_scratch.py`):** İnce-tahsisli RAM-Disk (`/Volumes/MekUltraScratch`) gecikme-kritik önbellekleri 400 GB/s bellekte tutarak NVMe SSD üzerindeki günlük TBW yazma yükünü azaltır. Aktif çalışma/render sırasında `rsync` G/Ç çakışması yapmaz; kalıcı SSD aynası veri kaybı olmadan senkronize edilir.
+- **Termal & Donanım Ömrü Koruması (`thermal_fan.py` + `disk_health.py`):** AppleSMC IOKit üzerinden CPU, GPU, **NVMe NAND SSD** ve **PSU/Kasa** sıcaklıklarını `<0.2 ms` gecikmeyle okur. Boşta 1100 RPM sessiz güvenli tabanda çalışır (0 RPM'in 370W PSU ve SSD'ye zarar vermesini önler); CPU/GPU ≥ 52°C veya SSD ≥ 55°C olduğunda anında Apple otomatik eğrisine, yüksek yük/SSD ısınmasında ön-soğutmaya geçer.
+- **Cihaz İçi Apple Foundation Models (`foundation_llm.py` + `ai/jarvis-ai.swift`):** macOS'un yerleşik Apple Foundation Models (`SystemLanguageModel.default`) motorunu sıfır ek RAM yüküyle entegre eder. `DynamicGenerationSchema` ile yapılandırılmış araç çağırma, `mek analiz` ile canlı performans & ömür teşhisi ve yalnızca gerçek sistem stresinde devreye giren otonom koruma danışmanı sunar.
+- **Doğal Türkçe Fonetik ("Epıl") ve Siri Kilitlenme Kalkanı:** EMA Lightning TTS motoru "Apple" tamlamalarını akıcı biçimde "Epıl" olarak okur; macOS Siri / Apple Intelligence süreçleri kaçak süreç kısıtlamasından muaf tutulur.
 
 ## Çökme Yönetimi ve Yetim Süreç Temizliği (Sessiz ve Otonom)
 - **Gereksiz Okumaları Engelleme:** Arka planda çöken sistem veya yardımcı süreçlerinin (örn. `MxContentService`, `ExcUserFault` vb.) rapor adları kullanıcıya sesli okunarak vakit kaybı yaratılmaz.
@@ -118,9 +105,10 @@ Apple Silicon Mac Studio donanımı ve profesyonel kurgu ekosistemi, cihaz üzer
     doğrudan Siri'nin kendi komut dizinine kaydolur. Ayrıca AppleScript Scripting Suite
     (`Mek.sdef`) ve `mek://` protokolü de kullanılabilir.
   - **Sesle:** *"Hey Siri, Mek"* (Mek ne istediğinizi sorar), *"Hey Siri, Mek durum"*,
-    *"Hey Siri, Mek brifing"*, *"Hey Siri, Mek temizlik yap"*,
-    *"Hey Siri, Mek karantinada ne var"*, *"Hey Siri, Mek kurgu modu"*,
-    *"Hey Siri, Mek kurgu durumu"*, *"Hey Siri, Mek'e sor [sorunuz]"*.
+    *"Hey Siri, Mek performans modu"*, *"Hey Siri, Mek donanım sağlığı"*,
+    *"Hey Siri, Mek sistem analizi"*, *"Hey Siri, Mek brifing"*,
+    *"Hey Siri, Mek temizlik yap"*, *"Hey Siri, Mek karantinada ne var"*,
+    *"Hey Siri, Mek'e sor [sorunuz]"*.
   - **Yazarak:** Sistem Ayarları → Erişilebilirlik → Siri → **"Siri'ye Yazın"** açıkken
     Siri'yi çağırıp aynı cümleleri yazabilirsiniz.
   - Terminalden: `mek cevap kapat`, `mek evet`, `mek hayır`
@@ -196,6 +184,12 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 **Terminal komutları:**
 - `mek brifing`: brifingi hemen okur
 - `mek durum`: anlık sistem durumu
+- `mek sağlık`: CPU/GPU/NVMe SSD/PSU sıcaklıkları, fan RPM, NVMe SMART, RAM-Disk ve Apple Foundation Models özet raporu
+- `mek analiz [uygula]`: cihaz içi Apple Foundation Models ile performans & donanım ömrü analizi
+- `mek performans`: sistem ve tüm uygulamalar için anlık Tier-0 P-Core / RAM-Disk / fan optimizasyonu
+- `mek bellek` / `mek llm [durum|boşalt]`: dinamik bellek bütçesi ve yerel Ollama bellek yönetimi
+- `mek ramdisk`: 400 GB/s Ultra-Scratch APFS RAM-Disk durumu
+- `mek fan [durum|sessiz|otomatik|performans]`: termal & fan kontrolü
 - `mek piyasa thy`: belirli bir hissenin fiyatı
 - `mek izleme`: izleme listesini ve kritik değişim eşiklerini gösterir
 - `mek izleme ekle THYAO.IS AAPL`: yalnızca seçtiğiniz sembolleri kritik değişimler için izler
@@ -225,9 +219,9 @@ sudo bash ~/.jarvis/jarvisd/install_privileged.sh   # güç profilleri + sistem 
 Uygulama kaldırma; cache, tercihler, destek dosyaları, sandbox container'ları ve uygulamaya ait kullanıcı başlangıç ajanları gibi bundle ID ile doğrudan eşleşen öğeleri kapsar. Paylaşılan Group Container'lar, kullanıcı belgeleri ve yönetici yetkisi gerektiren sistem öğeleri bilerek kapsam dışındadır.
 
 **Siri ile doğrudan kullanım:** Siri'ye *"Hey Siri, Mek"* demeniz yeterlidir; Mek ne
-istediğinizi sorar. Hazır cümleler: *"Mek durum"*, *"Mek brifing"*, *"Mek temizlik yap"*,
-*"Mek karantinada ne var"*, *"Mek kurgu modu"*, *"Mek kurgu durumu"*,
-*"Mek'e sor [sorunuz]"*. Hiçbir Kestirme (Shortcut) kurulumu gerekmez.
+istediğinizi sorar. Hazır cümleler: *"Mek durum"*, *"Mek performans modu"*,
+*"Mek donanım sağlığı"*, *"Mek sistem analizi"*, *"Mek brifing"*, *"Mek temizlik yap"*,
+*"Mek karantinada ne var"*, *"Mek'e sor [sorunuz]"*. Hiçbir Kestirme (Shortcut) kurulumu gerekmez.
 
 ### Siri entegrasyonu nasıl çalışıyor (teknik)
 

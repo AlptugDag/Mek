@@ -96,6 +96,7 @@ class SpeechQueueTests(unittest.TestCase):
         mek.speech_worker_lock = threading.Lock()
         mek.speech_worker = Mock()
         mek.speech_worker.is_alive.return_value = True
+        mek._quiet_hours = lambda: False
 
         mek.speak("Günaydın")
         mek.speak("Brifing")

@@ -176,7 +176,7 @@ def thermal_state():
 class Snapshot:
     __slots__ = ("t", "front", "front_pid", "idle", "cpu", "gpu", "mem_pct", "swap_gb", "disk_free_gb",
                  "pro_pids", "pro_procs", "render_cpu", "apps", "top_mem", "hot", "thermal", "pressure",
-                 "exes", "procs", "ppids")
+                 "exes", "procs", "ppids", "llm_gb")
 
 
 _PROC_CACHE = {}  # pid -> (create_time, name, cmd, ppid): süreç ömrü boyunca değişmeyen bilgileri önbellekle
@@ -300,6 +300,7 @@ def snapshot(events=None):
     s.apps = _cached("apps", 60, running_app_names)
     s.thermal = thermal_state()
     s.pressure = memory_pressure()
+    s.llm_gb = 0.0
     if events:
         events.publish("system.snapshot", snapshot=s)
     return s

@@ -450,12 +450,23 @@ def speak(text: str, force: bool = False):
     now = datetime.datetime.now()
     if is_quiet_hours(now) and not force:
         print(f"[Mek] Sessiz saat aralığındayız (00:00 - 11:00). Şu an saat: {now.strftime('%H:%M')}. Konuşma engellendi.")
-        return
+        return True
     text = normalize_phonetics(text)
     print(f"[Mek] Sentezleniyor: {text}")
     try:
+        hub_cache = os.path.expanduser("~/.cache/huggingface/hub")
+        if os.path.isdir(hub_cache):
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
         from ema_lightning import EMA
-        tts = EMA()
+        try:
+            tts = EMA()
+        except Exception:
+            if os.environ.get("HF_HUB_OFFLINE") == "1":
+                os.environ.pop("HF_HUB_OFFLINE", None)
+                tts = EMA()
+            else:
+                raise
         speech = tts.say(text, speed=SPEECH_SPEED)
 
         # Akustik ekolayzır Mac Studio hoparlörüne özeldir; başka bir çıkış
@@ -516,8 +527,10 @@ def speak(text: str, force: bool = False):
                 restore_mac_studio_volume(ca_id, orig_vol, orig_muted)
 
         print("[Mek] Oynatma başarıyla tamamlandı.")
+        return True
     except Exception as e:
         print(f"[Mek] Hata: {e}", file=sys.stderr)
+        return False
 
 
 def main():
@@ -543,14 +556,14 @@ def main():
         msg = " ".join(args.text) if args.text else f"Alptuğ Bey, {minutes} dakikalık süreniz doldu efendim."
         print(f"[Mek] Zamanlayıcı kuruldu: {minutes} dakika sonra konuşulacak.")
         time.sleep(minutes * 60)
-        speak(msg, force=args.force)
-        return
+        ok = speak(msg, force=args.force)
+        sys.exit(0 if ok else 1)
 
     # Doğrudan özel metin verilmişse: mek "Mesaj"
     if args.text and not args.periodic:
         custom_message = " ".join(args.text)
-        speak(custom_message, force=args.force)
-        return
+        ok = speak(custom_message, force=args.force)
+        sys.exit(0 if ok else 1)
 
     # Periyodik mod: kullanıcı bilgisayar başında değilse (idle > 10 dk) boş odaya konuşmaz
     if args.periodic:
@@ -562,7 +575,8 @@ def main():
         # Standart başlangıç brifingi
         message = build_startup_message()
 
-    speak(message, force=args.force)
+    ok = speak(message, force=args.force)
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

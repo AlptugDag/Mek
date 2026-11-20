@@ -32,7 +32,7 @@ DAY = 86400
 PRIV = "/usr/local/libexec/mek-priv"
 
 # Asla dokunulmayacak yollar (alt yolları dahil)
-PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H("Movies/Mek Proje Zaman Makinesi"), H(".jarvis"),
+PROTECT = [H("Movies/.gallery"), H("Movies/Resolve Project Backups"), H(".jarvis"),
            H(".cache/huggingface"), H(".cache/torch"), H(".cache/alptugdub-vc"), H(".cache/whisper"),
            H(".ollama"), H(".lmstudio"), H("Library/Application Support/Topaz Labs LLC/Topaz Video/models"),
            H("Library/Application Support/Adobe/Common/PTX"),
@@ -192,18 +192,23 @@ class Cleaner:
     # ------------------------------------------------------------------ kullanıcı alanı
     def kurgu(self):
         A = H("Library/Application Support/Adobe/Common")
+        adobe_running = any(
+            any(k in x for k in ("premiere", "after effects", "aftereffects", "media encoder", "ame.application", "audition", "photoshop"))
+            for x in self.running
+        )
         # Aktif ve yakın tarihli projelerin ses dalga formu (Peak Files) ve indeks (Media Cache)
-        # önbellekleri 60 gün korunur; PTX (derlenmiş GPU shader önbelleği) ASLA silinmez!
-        for sub in ("Media Cache Files", "Media Cache", "Peak Files", "Analyzer Cache Files"):
-            self.age("Adobe önbellekleri", os.path.join(A, sub), 60)
-        for sub in ("Cache", "Team Projects Cache", "Team Projects Local Hub"):
-            self.age("Adobe önbellekleri", os.path.join(A, sub), 14)
-        self.age("Adobe önbellekleri", H("Documents/Adobe/Premiere Pro/*/Profile-*/Media Cache*"), 60)
-        self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/**/Disk Cache"), 30)
-        self.age("Adobe önbellekleri", H("Library/Caches/Adobe"), 7)
+        # önbellekleri 60 gün korunur; Adobe açıkken aktif önbelleklere hiç dokunulmaz, PTX ASLA silinmez!
+        if not adobe_running:
+            for sub in ("Media Cache Files", "Media Cache", "Peak Files", "Analyzer Cache Files"):
+                self.age("Adobe önbellekleri", os.path.join(A, sub), 60)
+            for sub in ("Cache", "Team Projects Cache", "Team Projects Local Hub"):
+                self.age("Adobe önbellekleri", os.path.join(A, sub), 14)
+            self.age("Adobe önbellekleri", H("Documents/Adobe/Premiere Pro/*/Profile-*/Media Cache*"), 60)
+            self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/**/Disk Cache"), 30)
+            self.age("Adobe önbellekleri", H("Library/Caches/Adobe"), 7)
+            self.age("Adobe önbellekleri", H("Library/Caches/com.adobe.*"), 7)
         self.age("Adobe önbellekleri", H("Library/Caches/Adobe Camera Raw"), 14)
         self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/CameraRaw/Cache"), 14)
-        self.age("Adobe önbellekleri", H("Library/Caches/com.adobe.*"), 7)
         self.age("Adobe önbellekleri", H("Library/Application Support/Adobe Substance*/cache"), 14)
         self.age("Adobe önbellekleri", H("Library/Application Support/com.adobe.dunamis/cache"), 3)
         self.age("Adobe önbellekleri", H("Library/Application Support/Adobe/UPI/*/cache"), 7)
@@ -225,9 +230,11 @@ class Cleaner:
         self.age("DaVinci önbellekleri", os.path.join(R, "Cache"), 7)
         self.age("DaVinci kayıtları", os.path.join(R, "logs"), 7 if not self.is_deep else 2)
         T = H("Documents/Topaz Video Projects/Default")
-        self.age("Topaz önbellekleri", os.path.join(T, "previews"), 7)
-        self.age("Topaz önbellekleri", os.path.join(T, "thumbnails"), 14)
-        self.age("Topaz önbellekleri", os.path.join(T, "cpe"), 7)
+        topaz_running = any("topaz" in x for x in self.running)
+        if not topaz_running:
+            self.age("Topaz önbellekleri", os.path.join(T, "previews"), 7)
+            self.age("Topaz önbellekleri", os.path.join(T, "thumbnails"), 14)
+            self.age("Topaz önbellekleri", os.path.join(T, "cpe"), 7)
         self.age("Topaz kayıtları", H("Library/Application Support/Topaz Labs LLC/Topaz Video/logs"), 7)
         self.age("Capture One önbelleği", H("Library/Caches/com.captureone*"), 14)
         self.age("Maxon/Red Giant önbelleği", H("Library/Caches/net.maxon*"), 14)

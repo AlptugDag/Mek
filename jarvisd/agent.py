@@ -19,6 +19,7 @@ import time
 import urllib.request
 
 import config
+import foundation_llm
 
 log = logging.getLogger("mek.agent")
 
@@ -115,80 +116,28 @@ class Agent:
         def update_now(args):
             return m.command("güncelle şimdi")
 
-        def kurgu_durum(args):
-            return m.kurgu.status() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def kurgu_optimize(args):
-            return m.kurgu.optimize_environment() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def davinci_render(args):
-            return m.kurgu.start_davinci_render() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def premiere_export(args):
-            return m.kurgu.export_premiere_to_media_encoder() if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def kurgu_sessizlik(args):
-            yol = str(args.get("yol", "")).strip()
-            if not yol:
-                return "Lütfen analiz edilecek ses dosyası yolunu belirtin."
-            res = m.kurgu.analyze_audio_silence(yol)
-            if "error" in res:
-                return f"Hata: {res['error']}"
-            return (f"Ses analizi ({res['file']}): Toplam {res['total_duration_sec']}s, "
-                    f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
-                    f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
-
-        def film_rengi(args):
-            film = str(args.get("film", "matrix")).strip()
-            return m.kurgu.apply_film_color(film) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def efekt_yap(args):
-            tarif = str(args.get("tarif", "")).strip()
-            return m.kurgu.synthesize_effect(tarif) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def renk_klonla(args):
-            yol = str(args.get("yol", "")).strip()
-            return m.kurgu.clone_image_color(yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def kaba_kurgu(args):
-            yol = str(args.get("yol", "")).strip()
-            return m.kurgu.build_rough_cut(yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def multicam_kurgu(args):
-            yol = str(args.get("yol", "")).strip()
-            stil = str(args.get("stil", "dinamik podcast")).strip()
-            return m.kurgu.direct_multicam(yol, stil) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-
-        def viral_hook(args):
-            yol = str(args.get("yol", "")).strip()
-            metin = str(args.get("metin", "")).strip() or None
-            if not yol or not os.path.exists(yol):
-                # Doğrudan Premiere Pro açık timeline'ına ilk 3sn viral hook uygula
-                return m.kurgu.apply_viral_hook_in_premiere(title=metin or yol) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
-            return m.kurgu.extract_viral_hook(yol, transcript=metin) if hasattr(m, "kurgu") and m.kurgu else "Kurgu yöneticisi etkin değil."
+        def fan_mode(args):
+            kip = str(args.get("kip", "durum")).strip()
+            return m.command(f"fan {kip}")
 
         T = {
             "durum": ("Anlık CPU/GPU/bellek/disk/profil özeti", "oku", self._cmd("durum")),
+            "donanim_saglik": ("Donanım ömrü ve performans raporu: CPU/GPU/NVMe SSD/PSU sıcaklıkları, fan RPM, NVMe SMART, RAM/takas, Ultra-Scratch", "oku", self._cmd("sağlık")),
+            "ai_analiz": ("Apple Foundation Models ile canlı performans ve donanım ömrü analizi", "oku", self._cmd("analiz")),
+            "bellek": ("Dinamik uygulama bellek sınırları ve yerel LLM bellek ayak izi", "oku", self._cmd("bellek")),
+            "ramdisk": ("400 GB/s Ultra-Scratch RAM-Disk ve SSD aşınma kalkanı durumu", "oku", self._cmd("ramdisk")),
             "guc": ("Güç ve UPS durumu", "oku", self._cmd("güç")),
             "ag": ("Ağ kalitesi", "oku", self._cmd("ağ")),
-            "disk": ("Disk sağlığı", "oku", self._cmd("disk")),
+            "disk": ("Disk SMART sağlığı", "oku", self._cmd("disk")),
             "guvenlik": ("Güvenlik ayarları ve karantina sayısı", "oku", self._cmd("güvenlik")),
             "karantina": ("Karantinadaki öğeler", "oku", self._cmd("karantina")),
             "gunluk": ("Mek'in son kendiliğinden eylemleri", "oku", self._cmd("günlük 15")),
             "guncelleme_durumu": ("Yazılım güncelleme durumu", "oku", self._cmd("güncelle durum")),
             "top_processes": ("En çok bellek/CPU kullanan süreçler", "oku", top_processes),
-            "kurgu_durumu": ("Açık Premiere Pro veya DaVinci Resolve kurgu projelerinin durumu", "oku", kurgu_durum),
-            "kurgu_sessizlik": ("Ses kaydındaki sessizlikleri tespit edip kaba kurgu kesim noktaları çıkar. args: yol", "oku", kurgu_sessizlik),
-            "film_rengi": ("Seçilen filmin sinematik renk paletini (Matrix, Blade Runner, Oppenheimer, Amelie, Dune vb.) 3D LUT olarak üretip uygula. args: film", "guvenli", film_rengi),
-            "efekt_yap": ("Doğal dille tarif edilen görsel efekti (parıltı/bloom, gren, vinyet vb.) üretip uygula. args: tarif", "guvenli", efekt_yap),
-            "renk_klonla": ("Referans bir görselin renk paletini klonlayıp 3D LUT olarak aktar. args: yol", "guvenli", renk_klonla),
-            "kaba_kurgu": ("Ses/video dosyasından sessizlik ve nefesleri kesip otomatik FCPXML/EDL kaba kurgu sekansı üret. args: yol", "guvenli", kaba_kurgu),
-            "multicam_kurgu": ("Röportaj ve çoklu kamera çekimlerini konuşmacı sesine ve stile göre otonom kurgula. args: yol, stil", "guvenli", multicam_kurgu),
-            "viral_hook": ("Sosyal medya için videodaki en vurucu 3-7 saniyelik kancayı (viral hook) bulup sekansın 0. saniyesine yerleştir. args: yol", "guvenli", viral_hook),
-            "temizle": ("Günlük temizlik başlat (kurgu açıkken reddeder)", "guvenli", self._cmd("temizle")),
-            "kurgu_optimize": ("Kurgu ortamını optimize et (P-core önceliği, Ultra-Scratch RAM-disk, sessiz fan, purge)", "guvenli", kurgu_optimize),
-            "davinci_render": ("DaVinci Resolve Deliver sayfasındaki render işlerini başlat", "guvenli", davinci_render),
-            "premiere_export": ("Premiere Pro sekansını Adobe Media Encoder kuyruğuna gönder", "guvenli", premiere_export),
+            "performans_optimize": ("Sistem ve tüm uygulamalar için tam performans optimizasyonu (P-core Tier-0, Ultra-Scratch, fan, kapalı uygulama iç ayarları)", "guvenli", self._cmd("performans")),
+            "fan_ayarla": ("Termal fan kipini ayarla. args: kip (sessiz|otomatik|performans|durum)", "guvenli", fan_mode),
+            "llm_bosalt": ("Bellekte boşta duran yerel Ollama modellerini indirip RAM aç", "guvenli", self._cmd("llm boşalt")),
+            "temizle": ("Günlük akıllı önbellek temizliği başlat (açık uygulamaların aktif önbelleğini korur)", "guvenli", self._cmd("temizle")),
             "sustur": ("Mek'i sustur. args: dakika", "guvenli", mute),
             "arka_plana_al": ("CPU'yu yoran süreci verimlilik çekirdeğine al. args: pid", "guvenli", deprioritize),
             "uygulama_kapat": ("Uygulamayı kapat. args: ad", "onay", quit_app),
@@ -203,6 +152,16 @@ class Agent:
 
     # ------------------------------------------------------------------ modeller
     def _apple(self, system, prompt):
+        """Apple Foundation Models (cihaz içi, DynamicGenerationSchema ile kesin araç kısıtlı)."""
+        decision = foundation_llm.decide_agent(
+            system,
+            prompt,
+            tool_names=list(self.tools.keys()),
+            timeout=45,
+        )
+        if decision:
+            return json.dumps(decision, ensure_ascii=False)
+        # Eski/mock ikiliye veya geçici şema hatasına zarif geri dönüş:
         if not os.access(config.AI_BIN, os.X_OK):
             return None
         try:

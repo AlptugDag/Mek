@@ -32,6 +32,7 @@ import adblock
 import config
 import context as ctx
 import disk_health
+import foundation_llm
 import updater
 import power_guard as power
 from events import EventBus
@@ -42,8 +43,7 @@ import services
 from services import ServiceManager
 from memory_budget import MemoryBudget
 from questions import QuestionBox, Question, Option, ai_classifier
-from kurgu import KurguManager
-from neural_conductor import NeuralConductor
+from llm_ram import LLMRamCoordinator, is_llm_process
 import proc as proc_mod
 
 
@@ -85,18 +85,11 @@ EMOJI = re.compile("[\U0001F300-\U0001FAFF☀-➿️]")
 
 
 def ai_phrase(facts, style="kısa ve doğal", timeout=20):
-    """Apple Intelligence (cihaz üzerinde) ile bilgileri Mek üslubunda cümleye döker."""
-    if not os.access(config.AI_BIN, os.X_OK):
-        return None
+    """Cihaz üzerindeki Apple Foundation Models ile bilgileri Mek üslubunda cümleye döker."""
     instr = ("Sen Mek'sin: Alptuğ Bey'in Mac'inde yaşayan, zeki, kibar, hafif esprili bir asistan. "
              f"Verilen bilgileri sesli okunmak üzere {style} Türkçeyle aktar. Bilgileri değiştirme, "
              "sayıları aynen koru, yeni bilgi uydurma. Emoji, madde işareti, başlık kullanma.")
-    try:
-        r = subprocess.run([config.AI_BIN, instr], input=facts, capture_output=True, text=True, timeout=timeout)
-        out = EMOJI.sub("", r.stdout).strip()
-        return out if r.returncode == 0 and out else None
-    except Exception:
-        return None
+    return foundation_llm.generate_text(facts, instructions=instr, timeout=timeout)
 
 
 class Mek:
@@ -116,9 +109,9 @@ class Mek:
         self.network_state = "unknown"
         self.last_activity_snapshot = None
         self.services = ServiceManager(self.cfg, events=self.events)
-        self.kurgu = KurguManager(services=self.services, events=self.events)
-        self.neural_conductor = NeuralConductor(services=self.services, kurgu_mgr=self.kurgu)
         self.security = Security(self.notify, events=self.events)
+        self.llm_ram = LLMRamCoordinator()
+        self._last_llm_gb = 0.0
         self.memory_budget = MemoryBudget(self.cfg)
         self.questions = QuestionBox(
             notify=self.notify,
@@ -153,9 +146,21 @@ class Mek:
         self.speech_worker_lock = threading.Lock()
         self.running = True
 
+    @staticmethod
+    def _parse_crash_app_name(filename):
+        """macOS .ips/.crash/.hang dosya adından gerçek uygulama adını ayıklar."""
+        stem = re.sub(r"\.(ips|crash|hang)$", "", filename or "", flags=re.I)
+        stem = re.sub(r"-\d{4}-\d{2}-\d{2}-\d{6}(?:\.\d+)?$", "", stem)
+        if stem.startswith("ExcUserFault_"):
+            return stem.split("_", 1)[1] or stem, True
+        return stem, False
+
     def _on_crash_event(self, event, payload):
         report = payload["report"]
-        name = report["name"].split("_", 1)[0].rsplit(".", 1)[0]
+        name, is_user_fault = self._parse_crash_app_name(report["name"])
+        if is_user_fault:
+            log.debug("Sistem ExcUserFault raporu yoksayıldı: %s (%s)", name, report["name"])
+            return
         log.warning("Uygulama çökme raporu: %s (%s)", name, report["name"])
         # Çöken raporları sesli okumak yerine arka planda sessizce gerekeni yap:
         self._handle_crash_silently(name, report)
@@ -268,7 +273,7 @@ class Mek:
         """Speak requests in FIFO order so startup greetings cannot be overtaken."""
         if not text or not text.strip():
             return
-        if self._quiet_hours() and not force:
+        if not force and self._quiet_hours():
             log.info("Sessiz saatte konuşma engellendi (saat %02d): %s", dt.datetime.now().hour, text[:60])
             return
         text = re.sub(r"\bApple\b", "Epıl", text)
@@ -278,22 +283,30 @@ class Mek:
             if not self.speech_worker or not self.speech_worker.is_alive():
                 self.speech_worker = threading.Thread(target=self._speech_loop, daemon=True)
                 self.speech_worker.start()
-        self.speech_queue.put(text)
+        self.speech_queue.put((text, True) if force else text)
 
     def _speech_loop(self):
         while self.running or not self.speech_queue.empty():
             try:
-                text = self.speech_queue.get(timeout=0.5)
+                item = self.speech_queue.get(timeout=0.5)
             except queue.Empty:
                 continue
+            if isinstance(item, tuple):
+                text, force = item[0], bool(item[1])
+            else:
+                text, force = item, False
             try:
                 self.events.publish("speech.started", text=text)
-                log.info("SAY: %s", text)
-                result = subprocess.run([PY, SPEAK, text], stdout=subprocess.DEVNULL,
+                log.info("SAY%s: %s", " (force)" if force else "", text)
+                cmd = [PY, SPEAK] + (["--force"] if force else []) + [text]
+                result = subprocess.run(cmd, stdout=subprocess.DEVNULL,
                                         stderr=subprocess.PIPE, text=True,
+                                        timeout=90,
                                         preexec_fn=lambda: os.nice(5))
                 if result.returncode:
                     log.error("TTS başarısız (kod %d): %s", result.returncode, result.stderr.strip())
+            except subprocess.TimeoutExpired:
+                log.error("TTS zaman aşımına uğradı (90 sn)")
             except Exception:
                 log.exception("TTS çalıştırılamadı")
             finally:
@@ -634,6 +647,7 @@ class Mek:
             if (pid == os.getpid()
                     or pid in lineage
                     or re.search(r"kernel_task|WindowServer|coreaudiod|launchd|siri|campo|assistantd", name, re.I)
+                    or is_llm_process(target)
                     or services.is_creative_or_plugin(target)):
                 continue
             alive.add(pid)
@@ -753,6 +767,10 @@ class Mek:
             return 1e12
 
     def check_memory_relief(self, s):
+        if getattr(self, "llm_ram", None):
+            rel = self.llm_ram.maybe_relieve(s, self.cfg, pro_active=bool(getattr(s, "pro_pids", ())))
+            if rel.get("unloaded") and getattr(s, "pressure", 1) < 4:
+                return
         if getattr(s, "pressure", 1) >= 4:
             services.priv("purge")
         if not self.cfg.get("memory_relief", True) or s.idle > self.cfg["away_threshold_s"]:
@@ -785,6 +803,13 @@ class Mek:
             )
             self.questions.ask(q, repeat_after=3600)
 
+    def _safe_step(self, label, fn):
+        try:
+            return fn()
+        except Exception as e:
+            log.exception("Döngü adımı (%s) hatası: %s", label, e)
+            return None
+
     # ------------------------------------------------------------------ döngüler
     def loop(self):
         while self.running:
@@ -792,70 +817,115 @@ class Mek:
             try:
                 s = ctx.snapshot(self.events)
                 self.snap = s
-                self.services.tick(s, rendering=bool(self.renders.active())) # performans profili + QoS (her turda)
-                self.security.check_miners(s.hot)     # ek maliyetsiz
-                self.security.check_stealers(getattr(s, "procs", ()))  # sahte parola diyaloğu / keychain dökümü kalkanı
-                self.tame_runaways(s)
-                self.observe(s)
-                self.questions.expire()
-                if getattr(s, "exes", None) and self.security._due("memory_budget", 30):
+            except Exception as e:
+                log.exception("Anlık sistem durumu (snapshot) okunamadı: %s", e)
+                time.sleep(5)
+                continue
+
+            def _refresh_llm():
+                if not getattr(self, "llm_ram", None):
+                    return 0.0
+                check_api = self.security._due("llm_ram", 20)
+                if check_api or self.llm_ram.last_summary is None:
+                    info = self.llm_ram.inspect_snapshot(s, check_ollama=check_api)
+                else:
+                    info = self.llm_ram.inspect_snapshot(s, check_ollama=False)
+                self._last_llm_gb = float(info.get("total_gb") or 0.0)
+                return self._last_llm_gb
+
+            s.llm_gb = self._safe_step("llm_ram", _refresh_llm) or 0.0
+            self._safe_step("services", lambda: self.services.tick(s, rendering=bool(self.renders.active())))
+            self._safe_step("miners", lambda: self.security.check_miners(s.hot))
+            self._safe_step("stealers", lambda: self.security.check_stealers(getattr(s, "procs", ())))
+            self._safe_step("tame_runaways", lambda: self.tame_runaways(s))
+            self._safe_step("observe", lambda: self.observe(s))
+            self._safe_step("questions", self.questions.expire)
+
+            if getattr(s, "exes", None) and self.security._due("memory_budget", 30):
+                def _budget_tick():
                     w_pids = set(self.services.working_pids(s))
                     active_exes = [exe for pid, exe, _, _ in getattr(s, "pro_procs", ()) if pid in w_pids]
-                    self.memory_budget.tick(s.exes, active_exes=active_exes)
-                if getattr(s, "pressure", 1) >= 2 and self.security._due("memory_relief", 120):
-                    self.check_memory_relief(s)
-                busy = bool(s.pro_pids) or bool(self.renders.active())
-                idle = s.idle > 900
-                if time.monotonic() >= self.next_network_check:
-                    self.sample_network()
-                sec = self.security
-                if sec._due("power_state", 30):
-                    self.power_guard.sample()
-                if sec._due("cal", 60):
-                    self.calendar_tick()
-                if sec._due("pool", 120 if not busy else 300):
-                    sec.check_pool_connections()
-                if sec._due("market", 1800):
-                    threading.Thread(target=self.market_tick, daemon=True).start()
-                if sec._due("weather", 3600):
-                    threading.Thread(target=self.weather_tick, daemon=True).start()
-                if not busy and sec._due("persist", 900):
-                    sec.audit_persistence()
-                if not busy and sec._due("download_gate", 60):
-                    threading.Thread(target=sec.scan_recent_downloads, daemon=True).start()
-                if sec._due("crash_reports", 60):
-                    self.crash_monitor.scan()
-                if not busy and sec._due("posture", 6 * 3600):
+                    us = getattr(self.services, "ultra_scratch", None)
+                    scratch_gb = (us.used_bytes() / (1024 ** 3)) if us else 0.0
+                    extra = round(float(self._last_llm_gb or 0.0) + scratch_gb, 2)
+                    self.memory_budget.tick(s.exes, active_exes=active_exes, extra_reserve_gb=extra)
+                self._safe_step("memory_budget", _budget_tick)
+
+            if (getattr(s, "pressure", 1) >= 2 or getattr(s, "mem_pct", 0.0) >= 75.0) and self.security._due("llm_relief", 60):
+                self._safe_step("llm_relief", lambda: self.llm_ram.maybe_relieve(s, self.cfg, pro_active=bool(s.pro_pids)))
+
+            if getattr(s, "pressure", 1) >= 2 and self.security._due("memory_relief", 120):
+                self._safe_step("memory_relief", lambda: self.check_memory_relief(s))
+
+            # Cihaz içi Apple Foundation Models otonom stres danışmanı:
+            # Normal çalışmada hiç uyanmaz (0 CPU/RAM); yalnızca gerçek baskı/ısı stresinde
+            # en fazla 30 dakikada bir arka planda değerlendirme yapar.
+            tf_tel = getattr(getattr(self.services, "thermal_fan", None), "last_telemetry", None) or {}
+            ssd_hot = tf_tel.get("ssd_c") is not None and float(tf_tel["ssd_c"]) >= 58.0
+            stressed = (
+                getattr(s, "pressure", 1) >= 2
+                or float(getattr(s, "swap_gb", 0.0) or 0.0) >= 4.0
+                or int(getattr(s, "thermal", 0) or 0) >= 2
+                or ssd_hot
+            )
+            if stressed and self.security._due("fm_advisor", 1800):
+                threading.Thread(target=self._run_autonomous_fm_advisor, daemon=True).start()
+
+            busy = bool(s.pro_pids) or bool(self.renders.active())
+            idle = s.idle > 900
+            if time.monotonic() >= self.next_network_check:
+                self._safe_step("network", self.sample_network)
+            sec = self.security
+            if sec._due("power_state", 30):
+                self._safe_step("power", self.power_guard.sample)
+            if sec._due("cal", 60):
+                self._safe_step("calendar", self.calendar_tick)
+            if sec._due("pool", 120 if not busy else 300):
+                self._safe_step("pool", sec.check_pool_connections)
+            if sec._due("market", 1800):
+                threading.Thread(target=self.market_tick, daemon=True).start()
+            if sec._due("weather", 3600):
+                threading.Thread(target=self.weather_tick, daemon=True).start()
+            if not busy and sec._due("persist", 900):
+                self._safe_step("persist", sec.audit_persistence)
+            if not busy and sec._due("download_gate", 60):
+                threading.Thread(target=sec.scan_recent_downloads, daemon=True).start()
+            if sec._due("crash_reports", 60):
+                self._safe_step("crash_reports", self.crash_monitor.scan)
+            if not busy and sec._due("posture", 6 * 3600):
+                def _posture_check():
                     issues = sec.posture()
                     if issues and self._once("posture", 24 * 3600):
                         self.notify("Güvenlik ayarlarında dikkat: " + ", ".join(issues) +
                                     ". Sistem Ayarları'ndan açmanızı öneririm.", title="Güvenlik")
-                if idle and not busy:
-                    if sec._due("update_window", 300):
+                self._safe_step("posture", _posture_check)
+            if idle and not busy:
+                if sec._due("update_window", 300):
+                    def _update_check():
                         safe = updater.safe_install_window(
                             idle, busy, updater.is_on_ac_power(), s.disk_free_gb, s.thermal, self.network_state)
                         if safe and self._since("automatic_updates") >= 24 * 3600 and \
                                 sec._due("automatic_updates", 24 * 3600):
                             self.start_update_cycle()
-                    if sec._due("disk_smart", 6 * 3600):
-                        self.check_disk_smart()
-                    if sec._due("disk_verify", 7 * 86400):
-                        threading.Thread(target=self.verify_disk_volume, daemon=True).start()
-                # Ağır işler yalnızca siz yokken ve kurgu/render yokken
-                # Disk kritik: kurgu yoksa hemen (siz başındayken bile, en düşük öncelikte)
-                if s.disk_free_gb < 60 and not busy and self._since("acil") > 2 * 3600:
-                    self.start_clean("acil")
-                if idle and not busy:
-                    if self._since("haftalik") > 7 * 86400:
-                        self.start_clean("haftalik")
-                    elif self._since("gunluk") > 20 * 3600 and self._since("haftalik") > 20 * 3600:
-                        self.start_clean("gunluk")
-                    if sec._due("freshclam", 24 * 3600):
-                        threading.Thread(target=sec.update_av, daemon=True).start()
-                    if sec._due("av", 3 * 3600):
-                        threading.Thread(target=sec.av_scan, daemon=True).start()
-            except Exception as e:
-                log.exception("Döngü hatası: %s", e)
+                    self._safe_step("updater", _update_check)
+                if sec._due("disk_smart", 6 * 3600):
+                    self._safe_step("disk_smart", self.check_disk_smart)
+                if sec._due("disk_verify", 7 * 86400):
+                    threading.Thread(target=self.verify_disk_volume, daemon=True).start()
+            # Ağır işler yalnızca siz yokken ve kurgu/render yokken
+            # Disk kritik: kurgu yoksa hemen (siz başındayken bile, en düşük öncelikte)
+            if s.disk_free_gb < 60 and not busy and self._since("acil") > 2 * 3600:
+                self._safe_step("clean_acil", lambda: self.start_clean("acil"))
+            if idle and not busy:
+                if self._since("haftalik") > 7 * 86400:
+                    self._safe_step("clean_haftalik", lambda: self.start_clean("haftalik"))
+                elif self._since("gunluk") > 20 * 3600 and self._since("haftalik") > 20 * 3600:
+                    self._safe_step("clean_gunluk", lambda: self.start_clean("gunluk"))
+                if sec._due("freshclam", 24 * 3600):
+                    threading.Thread(target=sec.update_av, daemon=True).start()
+                if (getattr(s, "pressure", 1) == 1 and getattr(s, "mem_pct", 0.0) < 70.0
+                        and float(getattr(s, "llm_gb", 0.0) or 0.0) < 4.0 and sec._due("av", 3 * 3600)):
+                    threading.Thread(target=sec.av_scan, daemon=True).start()
             # Uyarlanır hız: kurgu sırasında 15 sn (yalnızca hafif işler), başınızdayken 10, uzakta 45
             s = self.snap
             gap = 45 if (s and s.idle > 600 and not s.pro_pids) else 15 if (s and s.pro_pids) else 10
@@ -943,8 +1013,144 @@ class Mek:
     # için ziyaret edilen herhangi bir web sayfası bile bu uç noktayı
     # çağırıp yanıtı okuyabiliyordu. Siri artık App Intents üzerinden
     # doğrudan Unix soketine bağlanıyor (bkz. ui/MekMenuBar.swift).
+    def _collect_advisor_telemetry(self):
+        s = self.snap
+        tf = getattr(self.services, "thermal_fan", None) if hasattr(self, "services") else None
+        tel = (tf.last_telemetry or tf.telemetry()) if tf else {}
+        us = getattr(self.services, "ultra_scratch", None) if hasattr(self, "services") else None
+        us_st = us.status_dict() if us else {}
+        headroom = disk_health.apfs_headroom()
+        top_ram = [f"{n} {rss / 1024**3:.1f}GB" for rss, n in (getattr(s, "top_mem", ()) or ())[:4]]
+        return {
+            "profile": getattr(self.services, "profile", "normal") if hasattr(self, "services") else "normal",
+            "front_app": getattr(s, "front", "") if s else "",
+            "cpu_usage_pct": round(float(getattr(s, "cpu", 0.0) or 0.0), 1),
+            "gpu_usage_pct": getattr(s, "gpu", None) if s else None,
+            "ram_usage_pct": round(float(getattr(s, "mem_pct", 0.0) or 0.0), 1),
+            "swap_gb": round(float(getattr(s, "swap_gb", 0.0) or 0.0), 1),
+            "memory_pressure_level": int(getattr(s, "pressure", 1) or 1),
+            "cpu_temp_c": tel.get("cpu_c"),
+            "gpu_temp_c": tel.get("gpu_c"),
+            "peak_temp_c": tel.get("peak_c"),
+            "nvme_ssd_temp_c": tel.get("ssd_c"),
+            "psu_temp_c": tel.get("psu_c"),
+            "fan0_rpm": tel.get("fan0_rpm"),
+            "fan1_rpm": tel.get("fan1_rpm"),
+            "fan_mode": tel.get("mode", "auto_silent"),
+            "disk_free_gb": headroom["free_gb"],
+            "disk_free_pct": headroom["free_pct"],
+            "ultra_scratch_used_mb": us_st.get("used_mb", 0.0),
+            "local_llm_ram_gb": round(float(getattr(self, "_last_llm_gb", 0.0) or 0.0), 2),
+            "top_ram_apps": top_ram,
+            # İç doğrulama korkulukları için uyumluluk alanları:
+            "cpu": round(float(getattr(s, "cpu", 0.0) or 0.0), 1),
+            "mem_pct": round(float(getattr(s, "mem_pct", 0.0) or 0.0), 1),
+            "pressure": int(getattr(s, "pressure", 1) or 1),
+            "peak_c": tel.get("peak_c"),
+            "ssd_c": tel.get("ssd_c"),
+            "llm_gb": round(float(getattr(self, "_last_llm_gb", 0.0) or 0.0), 2),
+        }
+
+    def _apply_safe_advisor_action(self, action):
+        if action == "optimize" and hasattr(self, "services") and self.services:
+            return self.services.optimize_now(self.snap)
+        if action == "fan_boost" and hasattr(self, "services") and getattr(self.services, "thermal_fan", None):
+            return self.services.thermal_fan.set_mode("performans")
+        if action == "fan_silent" and hasattr(self, "services") and getattr(self.services, "thermal_fan", None):
+            return self.services.thermal_fan.set_mode("sessiz")
+        if action == "unload_llm" and getattr(self, "llm_ram", None):
+            info = self.llm_ram.inspect_snapshot(self.snap, check_ollama=True)
+            unloaded = [
+                name for m in info["ollama_models"]
+                if (name := (m.get("name") or m.get("model"))) and self.llm_ram._unloader(name)
+            ]
+            return f"Ollama indirildi: {', '.join(unloaded)}." if unloaded else ""
+        if action == "clean_cache" and not (self.snap and self.snap.pro_pids):
+            self.start_clean("gunluk")
+            return "Günlük önbellek temizliği başlatıldı."
+        return ""
+
+    def analyze_with_foundation_models(self, apply_action=False):
+        """Apple Foundation Models ile canlı performans ve donanım ömrü analizi yapar."""
+        telemetry = self._collect_advisor_telemetry()
+        advice = foundation_llm.advise_system(telemetry)
+        applied_note = ""
+        if apply_action and advice["recommended_action"] != "none":
+            applied_note = self._apply_safe_advisor_action(advice["recommended_action"])
+        return foundation_llm.format_advice(advice, applied_note=applied_note)
+
+    def _run_autonomous_fm_advisor(self):
+        try:
+            telemetry = self._collect_advisor_telemetry()
+            advice = foundation_llm.advise_system(telemetry)
+            action = advice.get("recommended_action", "none")
+            applied = self._apply_safe_advisor_action(action) if action != "none" else ""
+            log.info(
+                "Apple Foundation Models stres analizi: puan=%d eylem=%s özet=%s",
+                advice["health_score"], action, advice["summary"],
+            )
+            if applied:
+                self.notify(f"Apple AI koruma: {advice['summary']} {applied}", title="Mek Performans")
+        except Exception as e:
+            log.debug("Otonom Apple Foundation Models analizi atlandı: %s", e)
+
+    def hardware_longevity_report(self):
+        """Bilgisayarın ve uygulamaların anlık performans + donanım ömrü özetini döndürür."""
+        s = self.snap
+        tf = getattr(self.services, "thermal_fan", None)
+        tel = tf.telemetry() if tf else {}
+        us = getattr(self.services, "ultra_scratch", None)
+        us_st = us.status_dict() if us else {}
+        disk = disk_health.inspect_disk()
+        headroom = disk_health.apfs_headroom()
+        wear = disk_health.nvme_wear_stats()
+        fm = foundation_llm.status()
+
+        lines = []
+        if s:
+            lines.append(
+                f"Performans Profili: {self.services.profile} | CPU %{s.cpu:.0f} | GPU %{s.gpu} | "
+                f"Bellek %{s.mem_pct:.0f} | Takas {s.swap_gb:.1f} GB | LLM {float(getattr(self, '_last_llm_gb', 0.0)):.1f} GB"
+            )
+        if tel:
+            ssd_txt = f", NVMe SSD {tel['ssd_c']}°C" if tel.get("ssd_c") is not None else ""
+            psu_txt = f", PSU/Kasa {tel['psu_c']}°C" if tel.get("psu_c") is not None else ""
+            lines.append(
+                f"Termal & Fan: CPU {tel.get('cpu_c')}°C, GPU {tel.get('gpu_c')}°C{ssd_txt}{psu_txt} | "
+                f"Fanlar {tel.get('fan0_rpm')}/{tel.get('fan1_rpm')} RPM ({tel.get('applied')})"
+            )
+        if us_st.get("mounted"):
+            lines.append(
+                f"Ultra-Scratch (SSD Aşınma Kalkanı): {us_st['used_mb']:.1f} MB / {us_st['size_gb']} GB "
+                f"(bağlar: {'sağlam' if us_st.get('symlinks_ok') else 'onarılıyor'})"
+            )
+        wear_txt = ""
+        if wear:
+            parts = []
+            if wear.get("percentage_used") is not None:
+                parts.append(f"aşınma %{wear['percentage_used']}")
+            if wear.get("tbw") is not None:
+                parts.append(f"yazılan {wear['tbw']} TB")
+            if wear.get("available_spare") is not None:
+                parts.append(f"yedek blok %{wear['available_spare']}")
+            if parts:
+                wear_txt = " | NVMe: " + ", ".join(parts)
+        headroom_status = "sağlıklı" if headroom["healthy_headroom"] else "düşük (temizlik önerilir)"
+        lines.append(
+            f"Disk & Ömür: SMART {disk.get('smart')} | Boş Alan {headroom['free_gb']:.0f} GB "
+            f"(%{headroom['free_pct']:.0f}, {headroom_status}){wear_txt}"
+        )
+        lines.append(
+            f"Cihaz İçi Zeka: {fm['model']} — {'Hazır (0 ek RAM)' if fm['available'] else 'Kapalı (' + fm['reason'] + ')'}"
+        )
+        return "\n".join(lines)
+
     def command(self, cmd):
         c = cmd.lower().strip()
+        if c in ("odak zorla", "performans", "optimize", "hızlandır", "hizlandir", "performans modu"):
+            if hasattr(self, "services") and self.services and hasattr(self.services, "optimize_now"):
+                return self.services.optimize_now(getattr(self, "snap", None))
+            return "Performans yöneticisi etkin değil."
         if c.startswith("odak "):
             parts = cmd.split(None, 2)
             if len(parts) >= 2 and parts[1].isdigit():
@@ -957,8 +1163,54 @@ class Mek:
                     w_pids = set(self.services.working_pids(snap))
                     active_exes = [exe for ppid, exe, _, _ in getattr(snap, "pro_procs", ()) if ppid in w_pids]
                     if active_exes:
-                        self.memory_budget.tick(snap.exes, active_exes=active_exes)
+                        us = getattr(self.services, "ultra_scratch", None)
+                        scratch_gb = (us.used_bytes() / (1024 ** 3)) if us else 0.0
+                        extra = round(float(getattr(self, "_last_llm_gb", 0.0) or 0.0) + scratch_gb, 2)
+                        self.memory_budget.tick(snap.exes, active_exes=active_exes, extra_reserve_gb=extra)
             return "ok"
+
+        if c in ("sağlık", "saglik", "ömür", "omur", "donanım", "donanim", "health"):
+            return self.hardware_longevity_report()
+
+        if c in ("analiz", "akıl", "akil", "ai", "ai analiz", "sistem analizi") or c.startswith(("analiz ", "ai ")):
+            if "durum" in c or "status" in c:
+                fm = foundation_llm.status(force=True)
+                return f"{fm['model']}: {'Aktif ve hazır (0 ek RAM).' if fm['available'] else 'Kullanılamıyor (' + fm['reason'] + ').'}"
+            apply_now = any(k in c for k in ("uygula", "düzelt", "duzelt", "auto", "otomatik"))
+            return self.analyze_with_foundation_models(apply_action=apply_now)
+
+        if c == "status_json":
+            s = getattr(self, "snap", None)
+            tf = getattr(self.services, "thermal_fan", None) if hasattr(self, "services") else None
+            tel = (tf.last_telemetry or tf.telemetry()) if tf else {}
+            us = getattr(self.services, "ultra_scratch", None) if hasattr(self, "services") else None
+            us_st = us.status_dict() if us and hasattr(us, "status_dict") else {}
+            fm = foundation_llm.status()
+            payload = {
+                "profile": getattr(self.services, "profile", "normal") if hasattr(self, "services") else "normal",
+                "front": getattr(s, "front", "") if s else "",
+                "cpu": round(float(getattr(s, "cpu", 0.0) or 0.0), 1),
+                "gpu": getattr(s, "gpu", None) if s else None,
+                "mem_pct": round(float(getattr(s, "mem_pct", 0.0) or 0.0), 1),
+                "swap_gb": round(float(getattr(s, "swap_gb", 0.0) or 0.0), 1),
+                "disk_free_gb": round(float(getattr(s, "disk_free_gb", 0.0) or 0.0), 1),
+                "llm_gb": round(float(getattr(self, "_last_llm_gb", 0.0) or 0.0), 2),
+                "pro_count": len(getattr(s, "pro_pids", ())) if s else 0,
+                "renders": self.renders.active() if hasattr(self, "renders") else [],
+                "cpu_c": tel.get("cpu_c"),
+                "gpu_c": tel.get("gpu_c"),
+                "ssd_c": tel.get("ssd_c"),
+                "psu_c": tel.get("psu_c"),
+                "peak_c": tel.get("peak_c"),
+                "fan0_rpm": tel.get("fan0_rpm"),
+                "fan1_rpm": tel.get("fan1_rpm"),
+                "fan_mode": tel.get("mode", "auto_silent"),
+                "scratch_mounted": bool(us_st.get("mounted")),
+                "scratch_used_mb": us_st.get("used_mb", 0.0),
+                "scratch_size_gb": us_st.get("size_gb", 12),
+                "fm_available": bool(fm.get("available")),
+            }
+            return json.dumps(payload, ensure_ascii=False)
 
         qbox = getattr(self, "questions", None)
         # Bekleyen bir soru varsa ve kullanıcı yanıt verdiyse:
@@ -966,7 +1218,7 @@ class Mek:
             c_clean = c.removeprefix("cevap ").strip()
             handled, reply = qbox.answer(c_clean)
             if handled:
-                self.speak(reply)
+                self.speak(reply, force=True)
                 return reply
 
         if c.startswith("cevap ") or c in ("soru", "sorular"):
@@ -976,12 +1228,56 @@ class Mek:
                 return qbox.summary()
             handled, reply = qbox.answer(cmd.split(None, 1)[1])
             if handled:
-                self.speak(reply)
+                self.speak(reply, force=True)
             return reply
 
         if c in ("bellek", "ram", "memory"):
             mb = getattr(self, "memory_budget", None)
-            return mb.report() if mb else "Bellek yöneticisi etkin değil."
+            base = mb.report() if mb else "Bellek yöneticisi etkin değil."
+            if getattr(self, "llm_ram", None):
+                return base + "\n" + self.llm_ram.format_report(self.snap)
+            return base
+
+        if c in ("llm", "llm durum") or c.startswith("llm "):
+            lr = getattr(self, "llm_ram", None)
+            if not lr:
+                return "LLM bellek koordinatörü etkin değil."
+            arg = c.split(None, 1)[1].strip() if " " in c else ""
+            if arg in ("boşalt", "bosalt", "temizle", "unload", "indir"):
+                info = lr.inspect_snapshot(self.snap, check_ollama=True)
+                unloaded = []
+                for m in info["ollama_models"]:
+                    name = m.get("name") or m.get("model")
+                    if name and lr._unloader(name):
+                        unloaded.append(name)
+                if unloaded:
+                    return f"Ollama bellekten indirildi: {', '.join(unloaded)}."
+                return "Bellekte yüklü boşaltılacak Ollama modeli yok."
+            return lr.format_report(self.snap)
+
+        if c in ("ses", "ses durum", "audio") or c.startswith("ses "):
+            arg = c.split(None, 1)[1].strip() if " " in c else ""
+            if arg in ("sistem", "system", "kulaklık", "kulaklik", "varsayılan", "varsayilan"):
+                self.cfg = config.set_values(speech_device="system")
+                return "Ses çıkışı sistem varsayılan aygıtına (kulaklık/aktif çıkış) ayarlandı."
+            if arg in ("hoparlör", "hoparlor", "mac studio", "macstudio"):
+                self.cfg = config.set_values(speech_device="mac studio")
+                return "Ses çıkışı Mac Studio dahili hoparlörüne ayarlandı."
+            if arg.startswith(("seviye ", "volume ")):
+                nums = re.findall(r"\d+(?:\.\d+)?", arg)
+                if nums:
+                    val = float(nums[0])
+                    vol = round(max(0.05, min(1.0, val / 100.0 if val > 1.0 else val)), 2)
+                    self.cfg = config.set_values(speech_volume=vol)
+                    return f"Konuşma ses düzeyi %{int(vol * 100)} olarak ayarlandı."
+            if arg == "test":
+                self.speak("Mek ses çıkışı testi başarılı.", force=True)
+                return f"Ses testi kuyruğa eklendi (aygıt: {self.cfg.get('speech_device')}, seviye: %{int(float(self.cfg.get('speech_volume', 0.3)) * 100)})."
+            return (f"Konuşma çıkışı: {self.cfg.get('speech_device', 'mac studio')} | "
+                    f"Ses düzeyi: %{int(float(self.cfg.get('speech_volume', 0.3)) * 100)} | "
+                    "Sessiz saatler: "
+                    f"{self.cfg.get('quiet_start_hour', 0):02d}:00-{self.cfg.get('quiet_end_hour', 11):02d}:00. "
+                    "Değiştirmek için: `mek ses sistem` | `mek ses hoparlör` | `mek ses seviye <10-100>` | `mek ses test`.")
 
         if c in ("ramdisk", "scratch", "ultrascratch", "ultra-scratch"):
             us = getattr(self.services, "ultra_scratch", None)
@@ -999,174 +1295,10 @@ class Mek:
                 return tf.set_mode(parts[1])
             return tf.report()
 
-        if c in ("zamanmakinesi", "zm", "timemachine", "proje yedek") or c.startswith(("zamanmakinesi ", "zm ", "timemachine ")):
-            tm = getattr(self.services, "timemachine", None)
-            if not tm:
-                return "Proje Zaman Makinesi etkin değil."
-            tm.scan_and_snapshot()
-            parts = cmd.strip().split()
-            if len(parts) >= 3 and parts[1].lower() in ("geri", "restore", "yukle", "yükle"):
-                ver = 1
-                if parts[-1].isdigit() and len(parts) >= 4:
-                    ver = int(parts[-1])
-                    query = " ".join(parts[2:-1])
-                else:
-                    query = " ".join(parts[2:])
-                ok, msg = tm.restore(query, version_index=ver)
-                return msg
-            query = " ".join(parts[1:]) if len(parts) > 1 else None
-            return tm.report(query=query)
-
-        if c in ("kurgu", "kurgu durum", "kurgu status"):
-            return self.kurgu.status() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
-
-        if c in ("kurgu optimize", "kurgu hızlandır", "kurgu hizlandir"):
-            return self.kurgu.optimize_environment() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
-
-        if c in ("kurgu render", "davinci render"):
-            return self.kurgu.start_davinci_render() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
-
-        if c in ("kurgu export", "premiere export"):
-            return self.kurgu.export_premiere_to_media_encoder() if hasattr(self, "kurgu") and self.kurgu else "Kurgu yöneticisi etkin değil."
-
-        if c.startswith("kurgu sessizlik"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu sessizlik /yol/dosya.wav"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            res = self.kurgu.analyze_audio_silence(parts[2].strip())
-            if "error" in res:
-                return f"Hata: {res['error']}"
-            return (f"Sessizlik Analizi ({res['file']}): Toplam {res['total_duration_sec']}s, "
-                    f"kesilecek sessizlik {res['silence_time_sec']}s (%{res['saved_percent']} tasarruf). "
-                    f"Toplam {res['cuts_count']} kesim noktası çıkarıldı.")
-
-        if c.startswith("kurgu renk"):
-            parts = cmd.split(None, 2)
-            film = parts[2].strip() if len(parts) > 2 else "matrix"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            return self.kurgu.apply_film_color(film)
-
-        if c.startswith("kurgu efekt"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu efekt <efekt tarifi>"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            return self.kurgu.synthesize_effect(parts[2].strip())
-
-        if c.startswith("kurgu klon"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu klon /yol/referans_gorsel.jpg"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            return self.kurgu.clone_image_color(parts[2].strip())
-
-        if c.startswith("kurgu kaba"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu kaba /yol/klip_veya_klasor"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            return self.kurgu.build_rough_cut(parts[2].strip())
-
-        if c.startswith("kurgu multicam"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu multicam /yol/klasor_veya_dosyalar [--stil 'dinamik podcast']"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            rest = parts[2].strip()
-            style = "dinamik podcast"
-            if "--stil" in rest:
-                src_part, style_part = rest.split("--stil", 1)
-                rest = src_part.strip()
-                style = style_part.strip().strip("'\"")
-            return self.kurgu.direct_multicam(rest, style)
-
-        if c.startswith(("kurgu key", "kurgu api", "api key", "gemini key")):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu key <Gemini_API_Anahtarı>"
-            if hasattr(self, "kurgu") and self.kurgu:
-                return self.kurgu.set_gemini_key(parts[2].strip())
-            return "Kurgu yöneticisi etkin değil."
-
-        if c.startswith("kurgu hook"):
-            parts = cmd.split(None, 2)
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            if len(parts) < 3:
-                # Parametresiz: Doğrudan Premiere Pro timeline'ının ilk 3 saniyesine viral hook uygula!
-                return self.kurgu.apply_viral_hook_in_premiere()
-            rest = parts[2].strip()
-
-            style = "punch_zoom"
-            if "--stil" in rest:
-                s_parts = rest.split("--stil", 1)
-                rest = s_parts[0].strip()
-                s_val = s_parts[1].strip().split()[0].strip("'\"")
-                style = s_val
-
-            # Eğer parametre bir dosya yolu değilse başlık olarak kabul et ve Premiere'e bas
-            if not os.path.exists(rest) and not rest.startswith("/"):
-                return self.kurgu.apply_viral_hook_in_premiere(title=rest or None, style=style)
-            key = None
-            if "--key" in rest:
-                v_part, k_part = rest.split("--key", 1)
-                rest = v_part.strip()
-                key = k_part.strip()
-            return self.kurgu.extract_viral_hook(rest, gemini_key=key)
-
-        if c.startswith(("kurgu timeline", "kurgu analiz")):
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            res = self.kurgu.analyze_premiere_timeline()
-            if "error" in res:
-                return f"Hata: {res['error']}"
-            return f"Premiere Pro Timeline: '{res.get('name', 'Sekans')}' ({res.get('width', 1080)}x{res.get('height', 1920)}, {res.get('fps', 25)} fps)."
-
-        if c.startswith("kurgu oto"):
-            parts = cmd.split(None, 2)
-            if len(parts) < 3:
-                return "Kullanım: kurgu oto /yol/klasor_veya_video [--stil 'dinamik podcast']"
-            if not hasattr(self, "kurgu") or not self.kurgu:
-                return "Kurgu yöneticisi etkin değil."
-            rest = parts[2].strip()
-            style = "dinamik podcast"
-            if "--stil" in rest:
-                src_part, style_part = rest.split("--stil", 1)
-                rest = src_part.strip()
-                style = style_part.strip().strip("'\"")
-            return self.kurgu.auto_edit_with_hook(rest, style)
-
-        if c.startswith(("zeka ", "orkestra ", "ai ")):
-            if not hasattr(self, "neural_conductor") or not self.neural_conductor:
-                return "Neural Conductor etkin değil."
-            prompt = cmd.split(None, 1)[1]
-            snap = getattr(self, "snap", None)
-            telemetry = {
-                "front_app": snap.front if snap else "Bilinmiyor",
-                "cpu": snap.cpu if snap else 0,
-                "gpu": snap.gpu if snap else 0,
-                "ram": snap.mem_pct if snap else 0,
-                "swap": f"{snap.swap_gb:.1f} GB" if snap else "0 GB",
-                "thermal": "Normal"
-            }
-            res = self.neural_conductor.orchestrate(prompt, telemetry)
-            msg = res["explanation"]
-            if res["actions"]:
-                msg += f" (Uygulanan eylemler: {'; '.join(res['actions'])})"
-            self.speak(res["explanation"])
-            return msg
-
         if c in ("yardım", "yardim", "help"):
-            return ("Komutlar: brifing, durum, bellek, ramdisk, fan [durum|sessiz|otomatik|performans], "
-                    "kurgu [durum|optimize|render|export|sessizlik], zeka <istek>, "
-                    "zamanmakinesi [geri <proje> [no]], izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
+            return ("Komutlar: brifing, durum, sağlık (donanım & ömür), analiz [uygula] (Apple Foundation Models), "
+                    "performans (optimize), bellek, llm [durum|boşalt], ramdisk, fan [durum|sessiz|otomatik|performans], "
+                    "ses [durum|sistem|hoparlör|seviye <N>|test], izleme [ekle|çıkar <sembol>], piyasa <sembol>, "
                     "temizle [derin], disk, ağ [test], güç, güvenlik, etkinlik [aç|sesli], soru, cevap <seçenek>, "
                     "güncelle [kontrol|durum|şimdi], karantina [geri <no>], günlük [adet], sor <serbest soru> (ya da doğrudan yazın), onay, iptal, reklam [durum|aç|güncelle|kapat], sus <dakika>. "
                     "Yalnızca tanımlı ve güvenli eylemler yürütülür; Mek keyfî terminal komutu çalıştırmaz.")
@@ -1189,7 +1321,7 @@ class Mek:
         if c in ("etkinlik", "activity", "etkinlik sesli"):
             report = activity_monitor.format_snapshot(activity_monitor.process_snapshot(events=self.events))
             if c == "etkinlik sesli":
-                self.speak(report)
+                self.speak(report, force=True)
             return report
         if c in ("etkinlik aç", "etkinlik ac", "activity open"):
             return activity_monitor.open_activity_monitor()["message"]
@@ -1225,13 +1357,13 @@ class Mek:
                     "onarım otomatik çalıştırılmaz.")
         if c.startswith("brifing"):
             text = self.briefing()
-            self.speak(text)
+            self.speak(text, force=True)
             return text
         if c == "izleme" or c.startswith("izleme ") or c == "watchlist" or c.startswith("watchlist "):
             return self.watchlist_command(cmd)
         if c.startswith("piyasa") or c.startswith("borsa"):
             text = apple.market_report(cmd.split(" ", 1)[1] if " " in cmd else "genel", self.cfg["market_watchlist"])
-            self.speak(text)
+            self.speak(text, force=True)
             return text
         if c.startswith("temizle"):
             tier = "haftalik" if any(k in c for k in ("derin", "haftalik", "kalıntı", "kalinti")) else "gunluk"
@@ -1251,7 +1383,6 @@ class Mek:
         if "karantina" in c or "karantına" in c or "neleri karantinaya" in c:
             if c == "karantina_json":
                 rows = self.security.quarantine_list()
-                import json
                 items = []
                 for i, ts, orig, dest, there in rows:
                     items.append({
@@ -1301,7 +1432,7 @@ class Mek:
             return ("Güvenlik ayarları: " + (", ".join(issues) if issues else "hepsi açık") +
                     f"{shell_txt}. Karantinada {max(0, q)} öğe var.{dl_extra}")
         if c.startswith("söyle "):
-            self.speak(cmd[6:])
+            self.speak(cmd[6:], force=True)
             return "ok"
         s = self.snap
         if c in ("durum", "status"):
@@ -1396,11 +1527,6 @@ class Mek:
 
     def run(self):
         threading.Thread(target=self.socket_loop, daemon=True).start()
-        if hasattr(self, "kurgu") and self.kurgu and hasattr(self.kurgu, "gateway"):
-            try:
-                self.kurgu.gateway.start()
-            except Exception as e:
-                log.warning("Mek Premiere Gateway başlatılamadı: %s", e)
         # Bilgisayar açılır açılmaz anında selamlama (gecikmesiz):
         threading.Thread(target=self._boot_greeting, daemon=True).start()
         log.info("Mek hazır")
@@ -1408,11 +1534,6 @@ class Mek:
 
     def stop(self, *_):
         self.running = False
-        if hasattr(self, "kurgu") and self.kurgu and hasattr(self.kurgu, "gateway"):
-            try:
-                self.kurgu.gateway.stop()
-            except Exception:
-                pass
         self.services.shutdown()
         sys.exit(0)
 

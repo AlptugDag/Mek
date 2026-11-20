@@ -201,22 +201,33 @@ class QuestionBox:
 
 
 def ai_classifier(ai_bin, run):
-    """Apple Intelligence ile serbest yanıtı seçeneklerden birine eşler; emin değilse None."""
+    """Apple Foundation Models (--mode classify, DynamicGenerationSchema) ile serbest yanıtı seçeneklerden
+    birine eşler; eski ikililer veya test sahteleri için düz JSON moduna düşer; emin değilse None."""
     def classify(q, text):
         if not os.access(ai_bin, os.X_OK):
             return None
+        keys = [o.key for o in q.options]
         opts = "\n".join(f"- {o.key}: {o.label}" for o in q.options)
-        instr = ("Bir asistanın sorusuna kullanıcının verdiği yanıtı sınıflandırıyorsun. Yalnızca JSON döndür: "
-                 '{"option":"<anahtar>"} ya da emin değilsen {"option":null}. Tahmin yürütme.')
+        instr = ("Bir asistanın sorusuna kullanıcının verdiği yanıtı sınıflandırıyorsun. "
+                 "Yalnızca verilen seçeneklerden biri açıkça uyuyorsa onu seç, emin değilsen 'none' döndür.")
         prompt = f"Soru: {q.text}\nSeçenekler:\n{opts}\nKullanıcının yanıtı: {text}"
-        r = run([ai_bin, instr], input=prompt, capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            return None
-        m = re.search(r"\{.*\}", r.stdout, re.S)
+        # Önce Apple Foundation Models yapılandırılmış sınıflandırma kipini dene:
+        r = run([ai_bin, "--mode", "classify", "--choices", ",".join(keys), instr],
+                input=prompt, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0 or not (r.stdout or "").strip():
+            # Eski köprü veya birim testi uyumu için klasik çağrı:
+            legacy_instr = ("Bir asistanın sorusuna kullanıcının verdiği yanıtı sınıflandırıyorsun. Yalnızca JSON döndür: "
+                            '{"option":"<anahtar>"} ya da emin değilsen {"option":null}. Tahmin yürütme.')
+            r = run([ai_bin, legacy_instr], input=prompt, capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return None
+        m = re.search(r"\{.*\}", r.stdout or "", re.S)
         if not m:
             return None
         try:
-            return json.loads(m.group(0)).get("option")
+            data = json.loads(m.group(0))
+            val = data.get("choice") if "choice" in data else data.get("option")
+            return val if val in keys else None
         except ValueError:
             return None
     return classify

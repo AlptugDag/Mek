@@ -210,7 +210,7 @@ def warm_plugins_and_caches(home=HOME, plugin_roots=PLUGIN_ROOTS, budget_bytes=7
 class PreWarmer:
     """Kurgu uygulamalarını, framework'lerini ve eklentilerini birleşik RAM önbelleğinde sıcak tutar."""
 
-    def __init__(self, home=HOME, apps_dir="/Applications", min_interval_s=1200):
+    def __init__(self, home=HOME, apps_dir="/Applications", min_interval_s=3600):
         self.home = home
         self.apps_dir = apps_dir
         self.min_interval_s = min_interval_s
@@ -219,17 +219,20 @@ class PreWarmer:
         self._lock = threading.Lock()
         self._running = False
 
-    def warm_now(self, app_filter=None):
-        """Senkron ön-ısıtma çalıştırır; ısıtılan toplam bayt ve uygulama sayısını döndürür."""
+    def warm_now(self, app_filter=None, skip_exes=None):
+        """Senkron ön-ısıtma çalıştırır; zaten çalışan uygulamaların ikili dosyalarını atlar."""
         total_bytes = 0
         apps_warmed = 0
         now = time.time()
+        skip_tuple = tuple(skip_exes or ())
 
         b_plug, n_plug = warm_plugins_and_caches(home=self.home)
         total_bytes += b_plug
 
         for app_path in _discover_creative_apps(self.apps_dir):
             if app_filter and not re.search(app_filter, app_path, re.I):
+                continue
+            if skip_tuple and any(exe.startswith(app_path + "/") for exe in skip_tuple):
                 continue
             b_app = warm_app_bundle(app_path)
             if b_app > 0:
@@ -246,9 +249,26 @@ class PreWarmer:
         )
         return {"bytes": total_bytes, "apps": apps_warmed, "plugin_files": n_plug}
 
-    def tick_async(self, pressure=1, mem_pct=0.0):
-        """Bellek baskısı normalken (pressure == 1) arka plan iş parçacığında ön-ısıtmayı tetikler."""
-        if pressure > 1 or mem_pct >= 85.0:
+    def tick_async(
+        self,
+        pressure=1,
+        mem_pct=0.0,
+        llm_gb=0.0,
+        max_mem_pct=65.0,
+        busy_editing=False,
+        rendering=False,
+        swap_gb=0.0,
+        running_exes=None,
+    ):
+        """Yalnızca sistem sakin, bellek baskısı normal, takas düşük ve kurgu/render aktif değilken ön-ısıtır."""
+        if (
+            busy_editing
+            or rendering
+            or pressure > 1
+            or mem_pct >= max_mem_pct
+            or llm_gb >= 12.0
+            or swap_gb >= 2.0
+        ):
             return False
         now = time.time()
         if now - self.last_full_warm < self.min_interval_s:
@@ -258,13 +278,15 @@ class PreWarmer:
                 return False
             self._running = True
 
+        skip_exes = tuple(running_exes or ())
+
         def _worker():
             try:
                 try:
                     os.nice(10)
                 except OSError:
                     pass
-                self.warm_now()
+                self.warm_now(skip_exes=skip_exes)
             except Exception as e:
                 log.warning("Ön-ısıtma hatası: %s", e)
             finally:

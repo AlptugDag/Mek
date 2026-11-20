@@ -148,14 +148,22 @@ class MemoryBudget:
                         _atomic_write(path, new, "latin-1")
 
     # ------------------------------------------------------------------ döngü
-    def tick(self, exes, active_exes=None):
+    def tick(self, exes, active_exes=None, extra_reserve_gb=0.0):
         """Kapalı uygulamaların ve Adobe DynamicLink havuzunun sınırlarını güncel çalışma/onem
         durumuna göre dinamik olarak yeniden yazar. Değişiklik listesi döner."""
         running = running_apps(exes)
         active = running_apps(active_exes) if active_exes else None
-        target = plan(self.total_gb, running, self.cfg.get("memory_reserve_gb", 10),
+        base_reserve = float(self.cfg.get("memory_reserve_gb", 10))
+        extra = max(0.0, float(extra_reserve_gb or 0.0))
+        effective_reserve = min(base_reserve + extra, max(base_reserve, self.total_gb - 12.0))
+        target = plan(self.total_gb, running, effective_reserve,
                       self.cfg.get("memory_overcommit", 1.2), active=active)
-        self.last_plan = {"running": sorted(running), "active": sorted(active or ()), "plan": target}
+        self.last_plan = {
+            "running": sorted(running),
+            "active": sorted(active or ()),
+            "extra_reserve_gb": round(extra, 2),
+            "plan": target,
+        }
         changes = []
         for key, gb in target.items():
             current = self.read(key)
@@ -191,14 +199,28 @@ class MemoryBudget:
                 parts.append(f"{spec['name']} {cur:.0f} GB")
         running = self.last_plan.get("running") or []
         active = self.last_plan.get("active") or []
+        extra = float(self.last_plan.get("extra_reserve_gb") or 0.0)
         act_str = f" (aktif öncelikli: {', '.join(APPS[k]['name'] for k in active)})" if active else ""
+        llm_str = f" | LLM/Scratch korumalı rezerv: +{extra:.1f} GB" if extra >= 0.5 else ""
         return (f"Toplam {self.total_gb:.0f} GB. Uygulama bellek sınırları: " + (", ".join(parts) or "ayar bulunamadı") +
-                f". Açık ağır uygulama: {', '.join(APPS[k]['name'] for k in running) or 'yok'}{act_str}. "
+                f". Açık ağır uygulama: {', '.join(APPS[k]['name'] for k in running) or 'yok'}{act_str}{llm_str}. "
                 "Sınırlar, açık uygulamaların aktif/bekleme önem sırasına göre dinamik ayarlanır.")
 
 
 def _atomic_write(path, text, encoding="utf-8"):
-    tmp = path + ".mek-tmp"
-    with open(tmp, "w", encoding=encoding, newline="") as f:
-        f.write(text)
-    os.replace(tmp, path)
+    import tempfile
+    parent = os.path.dirname(path) or "."
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".mek_", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

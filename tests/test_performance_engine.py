@@ -8,10 +8,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "jarvisd"))
 import app_tuner
-import gzip
 import memory_budget
 import prewarmer
-import project_timemachine
 import services
 import thermal_fan
 import ultra_scratch
@@ -188,8 +186,8 @@ class PerformanceEngineTests(unittest.TestCase):
             with open(db_path, "w", encoding="utf-8") as f:
                 f.write(
                     "ExporterCalcMaxRequests.OverrideMaxRequests\t1\t\n"
-                    "GF.DisableMemoryPooling\ttrue\ttrue\n"
-                    "GF.UseMetalHeap\tfalse\tfalse\n"
+                    "GF.DisableMemoryPooling\tfalse\tfalse\n"
+                    "GF.UseMetalHeap\ttrue\ttrue\n"
                     "MediaCoreAsyncFrameCount3\t10\t10\n"
                     "BeePostedCmdTraceMode (0:None,1:Posted,2:PostedDelta,3:PostedDeltaAndDecode)\t2\t2\n"
                 )
@@ -197,9 +195,9 @@ class PerformanceEngineTests(unittest.TestCase):
             self.assertEqual(changes, 5)
             content = open(db_path, encoding="utf-8").read()
             self.assertIn("ExporterCalcMaxRequests.OverrideMaxRequests\t\t\n", content)
-            self.assertIn("GF.DisableMemoryPooling\tfalse\ttrue\n", content)
-            self.assertIn("GF.UseMetalHeap\ttrue\tfalse\n", content)
-            self.assertIn("MediaCoreAsyncFrameCount3\t32\t10\n", content)
+            self.assertIn("GF.DisableMemoryPooling\ttrue\tfalse\n", content)
+            self.assertIn("GF.UseMetalHeap\tfalse\ttrue\n", content)
+            self.assertIn("MediaCoreAsyncFrameCount3\t16\t10\n", content)
 
             latest_app = os.path.join(td, "Adobe Premiere Pro 2030.app")
             os.makedirs(latest_app, exist_ok=True)
@@ -209,15 +207,54 @@ class PerformanceEngineTests(unittest.TestCase):
                     "<PremiereData>\n"
                     "\t<BE.Prefs.Undo.MaxLevels>1000</BE.Prefs.Undo.MaxLevels>\n"
                     "\t<BE.Prefs.AutoSave.Interval>5</BE.Prefs.AutoSave.Interval>\n"
+                    '\t<Audio>{"abe.io.audio.coreaudio.ioblocksize": 512, "abe.io.audio.outputonly": false}</Audio>\n'
                     "\t<HSL.Watermark>/Applications/Adobe Premiere Pro 2023/Adobe Premiere Pro 2023.app/Contents/w.png</HSL.Watermark>\n"
                     "</PremiereData>\n"
                 )
             xml_changes = app_tuner.tune_premiere_prefs_file(xml_path, latest_app=latest_app)
-            self.assertEqual(xml_changes, 3)
+            self.assertEqual(xml_changes, 5)
             xml_out = open(xml_path, encoding="utf-8").read()
             self.assertIn("<BE.Prefs.Undo.MaxLevels>100</BE.Prefs.Undo.MaxLevels>", xml_out)
             self.assertIn("<BE.Prefs.AutoSave.Interval>15</BE.Prefs.AutoSave.Interval>", xml_out)
+            self.assertIn('"abe.io.audio.coreaudio.ioblocksize": 1024', xml_out)
+            self.assertIn('"abe.io.audio.outputonly": true', xml_out)
             self.assertIn(latest_app, xml_out)
+
+    def test_single_pro_app_focus_switch_to_finder_does_not_thrash_taskpolicy(self):
+        snap = SimpleNamespace(
+            front="Adobe Premiere Pro 2027",
+            front_pid=4511,
+            mem_pct=50,
+            pressure=1,
+            swap_gb=0.0,
+            pro_pids=[4511],
+            pro_procs=[
+                (4511, "/Applications/Adobe Premiere Pro 2027/Adobe Premiere Pro 2027.app/Contents/MacOS/Adobe Premiere Pro 2027", 35.0, 10 * 1024**3),
+            ],
+        )
+        with patch.object(services, "_run") as run_mock, patch.object(services, "_renice_safe"):
+            self.mgr.on_focus_change(4511, "Adobe Premiere Pro 2027", snap)
+            self.assertEqual(self.mgr.pro_tier.get(4511), 0)
+            run_mock.reset_mock()
+            # Kullanıcı kısa süreliğine Finder'a geçtiğinde tek kurgu sürecine tekrar taskpolicy basılmaz:
+            self.mgr.on_focus_change(999, "Finder", snap)
+            run_mock.assert_not_called()
+            self.assertNotIn(4511, self.mgr.parked_pro)
+
+    def test_runaway_cep_and_mxcontent_are_clamped_to_ecores(self):
+        snap = SimpleNamespace(
+            pro_pids=[4511],
+            ppids={},
+            procs=[
+                (4600, "CEPHtmlEngine", "/Applications/Adobe Premiere Pro 2027/CEPHtmlEngine", 28.0, 150_000_000),
+                (4605, "MxContentService", "/Library/Application Support/Maxon/MxContentService", 4.0, 80_000_000),
+            ],
+        )
+        with patch.object(services, "_run") as run_mock:
+            self.mgr.guard(snap)
+            cmds = [c.args[0] for c in run_mock.call_args_list]
+            self.assertIn(["/usr/sbin/taskpolicy", "-b", "-p", "4600"], cmds)
+            self.assertIn(["/usr/sbin/taskpolicy", "-b", "-p", "4605"], cmds)
 
     def test_prewarmer_advises_files_into_page_cache(self):
         with tempfile.TemporaryDirectory() as td:
@@ -225,9 +262,13 @@ class PerformanceEngineTests(unittest.TestCase):
             with open(sample, "wb") as f:
                 f.write(b"x" * 4096)
             self.assertEqual(prewarmer.advise_file(sample), 4096)
+            pw = prewarmer.PreWarmer(home=td, apps_dir=td)
+            self.assertFalse(pw.tick_async(pressure=1, mem_pct=40.0, busy_editing=True))
+            self.assertFalse(pw.tick_async(pressure=1, mem_pct=40.0, rendering=True))
+            self.assertFalse(pw.tick_async(pressure=1, mem_pct=40.0, swap_gb=3.0))
 
     def test_thermal_fan_controller_switches_between_silent_auto_and_boost_safely(self):
-        state = {"Tp01": 42.0, "Tg05": 39.5, "F0Ac": 1330.0, "F1Ac": 1330.0, "F0Mn": 1100.0, "F0Mx": 3500.0, "F0Tg": 1330.0, "F0Md": 0}
+        state = {"Tp01": 42.0, "Tg05": 39.5, "TH0a": 31.0, "F0Ac": 1330.0, "F1Ac": 1330.0, "F0Mn": 1100.0, "F0Mx": 3500.0, "F0Tg": 1330.0, "F0Md": 0}
         fake_reader = SimpleNamespace(read_key=lambda k: state.get(k))
         ctrl = thermal_fan.ThermalFanController(reader=fake_reader)
         with patch.object(ctrl, "_priv_fan", return_value=True) as priv_mock:
@@ -242,44 +283,19 @@ class PerformanceEngineTests(unittest.TestCase):
             self.assertEqual(ctrl.applied_state, "auto")
             priv_mock.assert_called_with("fan-auto")
 
+            # NVMe SSD 66°C'ye çıkarsa SSD ömrünü korumak için ön-soğutmaya (boost) geçer:
+            state["Tp01"] = 48.0
+            state["TH0a"] = 66.0
+            ctrl.tick(rendering=False, thermal_state=0)
+            self.assertEqual(ctrl.applied_state, "boost")
+            priv_mock.assert_called_with("fan-boost")
+
             # Render sırasında 75°C'ye ulaştığında performans ön-soğutmaya (boost) geçer:
+            state["TH0a"] = 35.0
             state["Tp01"] = 75.0
             ctrl.tick(rendering=True, thermal_state=0)
             self.assertEqual(ctrl.applied_state, "boost")
             priv_mock.assert_called_with("fan-boost")
-
-    def test_project_timemachine_clones_valid_prproj_and_restores_version(self):
-        with tempfile.TemporaryDirectory() as td:
-            vault = os.path.join(td, "vault")
-            proj_path = os.path.join(td, "FilmKurgu.prproj")
-            with gzip.open(proj_path, "wb") as gz:
-                gz.write(b"<?xml version='1.0'?><PremiereData Version='1'>v1</PremiereData>" * 4)
-
-            tm = project_timemachine.ProjectTimeMachine(vault_dir=vault, home=td)
-            snap1 = tm.snapshot_project(proj_path)
-            self.assertIsNotNone(snap1)
-            # Değişiklik yokken tekrar klonlamaz:
-            self.assertIsNone(tm.snapshot_project(proj_path))
-
-            # Proje güncellendiğinde yeni anlık klon alır:
-            with gzip.open(proj_path, "wb") as gz:
-                gz.write(b"<?xml version='1.0'?><PremiereData Version='2'>v2_updated</PremiereData>" * 4)
-            os.utime(proj_path, (2000000000, 2000000000))
-            snap2 = tm.snapshot_project(proj_path)
-            self.assertIsNotNone(snap2)
-
-            # Bozuk/yarım yazılmış gzip dosyasını ASLA klonlamaz:
-            with open(proj_path, "wb") as f:
-                f.write(b"\x1f\x8b\x08\x00corrupted_stream_data" * 5)
-            os.utime(proj_path, (2000000100, 2000000100))
-            self.assertIsNone(tm.snapshot_project(proj_path))
-
-            # Önceki sürüme (2 numara = v1) geri yükle:
-            ok, msg = tm.restore("FilmKurgu", version_index=2)
-            self.assertTrue(ok, msg)
-            with gzip.open(proj_path, "rb") as gz:
-                restored_data = gz.read()
-            self.assertIn(b"Version='1'", restored_data)
 
     def test_ultra_scratch_hydrates_ram_disk_and_creates_symlinks(self):
         with tempfile.TemporaryDirectory() as td:

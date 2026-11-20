@@ -75,12 +75,24 @@ class CrashMonitor:
             return set()
 
     def _save(self):
-        os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-        temp = self.state_path + ".tmp"
-        with open(temp, "w", encoding="utf-8") as state_file:
-            json.dump(sorted(self.seen)[-2000:], state_file)
-        os.replace(temp, self.state_path)
-        self.seen = set(sorted(self.seen)[-2000:])
+        import tempfile
+        parent = os.path.dirname(self.state_path) or "."
+        os.makedirs(parent, exist_ok=True)
+        data = sorted(self.seen)[-2000:]
+        fd, temp = tempfile.mkstemp(prefix=".mek_crash_", suffix=".tmp", dir=parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as state_file:
+                json.dump(data, state_file)
+                state_file.flush()
+                os.fsync(state_file.fileno())
+            os.replace(temp, self.state_path)
+        except Exception:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+            raise
+        self.seen = set(data)
 
     def scan(self):
         paths = []

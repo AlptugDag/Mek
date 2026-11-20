@@ -576,6 +576,7 @@ class SpeechOutputDeviceTests(unittest.TestCase):
             play=lambda a, samplerate=None, device=None: played.update(device=device),
             wait=lambda: None)
         try:
+            mod.is_quiet_hours = lambda now=None: False
             mod.speak("merhaba")
         finally:
             sys.modules.pop("ema_lightning", None)

@@ -10,16 +10,16 @@ Premiere Pro, After Effects ve Media Encoder'ın zaman çizelgesinde (timeline) 
   - `Analyzer Cache Files` (optik akış / analiz önbelleği)
   - `Media Cache` (.mcdb medya indeks veritabanları)
   - `PTX` (derlenmiş Metal/GPU shader önbelleği)
-dizinlerini şeffaf biçimde bu 400 GB/s RAM-Diske yönlendirir ve arka planda SSD yedeğiyle
-(`~/.jarvis/state/ultra_scratch_mirror`) senkronize tutar.
+dizinlerini şeffaf biçimde bu 400 GB/s RAM-Diske yönlendirir ve sistem sakinleştiğinde SSD aynasıyla
+(`~/Library/Application Support/Adobe/Common/.mek_ssd_backing`) artımlı senkronize eder.
 
 Güvenlik ve Kalıcılık:
-- Bilgisayar yeniden başlatıldığında SSD aynasındaki tüm `.pek`, `.mcdb` ve `.ptx` dosyaları
-  milisaniyeler içinde RAM-Diske geri yüklenir (hiçbir önbellek kaybolmaz).
+- Aktif kurgu/render sırasında gereksiz rsync G/Ç çakışması yaratmaz; senkronizasyon yalnızca sistem
+  sakinleştiğinde, kapanışta veya bellek baskısı tahliyesinden hemen önce yapılır.
+- Bellek baskısı tahliyesinde SSD aynası `--delete` olmadan korunur; son 10 dakikada değiştirilen
+  aktif zaman çizelgesi önbellek dosyaları RAM-Disk kritik doluluğa (%90) ulaşmadıkça silinmez.
 - Masaüstünde disk ikonu kalabalığı yapmaması için `-nobrowse` ile bağlanır, Spotlight ve FSEvents
   indekslemesi (`.metadata_never_index` ve `.fseventsd/no_log`) tamamen kapatılır.
-- Kritik bellek baskısında (`pressure >= 4`) en eski önbellek dosyalarını SSD'ye aktarıp RAM'i
-  otomatik boşaltır.
 """
 import logging
 import os
@@ -46,7 +46,9 @@ SCRATCH_DIRS = (
 )
 
 DEFAULT_SIZE_GB = 12
-SYNC_INTERVAL_S = 300  # 5 dakikada bir RAM-Disk -> SSD artımlı senkronizasyon
+SYNC_INTERVAL_S = 600        # 10 dakikada bir sakin anlarda artımlı senkronizasyon
+HOT_FILE_PROTECT_S = 600     # Son 10 dakikada kullanılan aktif önbelleği koru
+MIRROR_MAX_AGE_DAYS = 45     # SSD aynasında 45 günden eski kullanılmayan önbelleği buda
 
 
 def _run(cmd, timeout=30):
@@ -62,6 +64,7 @@ class UltraScratchManager:
         self.adobe_common = adobe_common
         self.mirror_root = mirror_root
         self.last_sync = 0.0
+        self.last_mirror_prune = 0.0
         self._lock = threading.Lock()
 
     def is_mounted(self):
@@ -167,32 +170,79 @@ class UltraScratchManager:
                 except OSError:
                     pass
 
-    def sync_to_ssd(self, force=False):
-        """RAM-Diskteki yeni/güncel önbellek dosyalarını kalıcı SSD aynasına (`mirror_root`) yazar."""
+    def symlinks_healthy(self):
+        """Tüm gecikme-kritik Adobe önbellek sembolik bağlarının RAM-Diske baktığını doğrular."""
+        ram_adobe = os.path.join(self.mount_point, "AdobeCommon")
+        for sub in SCRATCH_DIRS:
+            orig_path = os.path.join(self.adobe_common, sub)
+            ram_path = os.path.join(ram_adobe, sub)
+            if not os.path.islink(orig_path) or os.readlink(orig_path) != ram_path:
+                return False
+        return True
+
+    def sync_to_ssd(self, force=False, mirror_delete=False):
+        """RAM-Diskteki yeni/güncel önbellek dosyalarını kalıcı SSD aynasına (`mirror_root`) yazar.
+
+        Not: Varsayılan olarak `--delete` kullanılmaz; böylece bellek baskısı nedeniyle RAM-Diskten
+        tahliye edilen eski önbellekler SSD aynasından yanlışlıkla silinmez.
+        """
         now = time.time()
         if not force and (now - self.last_sync < SYNC_INTERVAL_S):
             return False
         if not self.is_mounted():
             return False
-        self.last_sync = now
-        ram_adobe = os.path.join(self.mount_point, "AdobeCommon")
-        for sub in SCRATCH_DIRS:
-            ram_path = os.path.join(ram_adobe, sub)
-            mirror_path = os.path.join(self.mirror_root, sub)
-            if os.path.isdir(ram_path):
-                os.makedirs(mirror_path, exist_ok=True)
-                _run(["/usr/bin/rsync", "-a", "--delete", f"{ram_path}/", f"{mirror_path}/"])
+        with self._lock:
+            self.last_sync = now
+            ram_adobe = os.path.join(self.mount_point, "AdobeCommon")
+            flags = ["-a", "-u"] + (["--delete"] if mirror_delete else [])
+            for sub in SCRATCH_DIRS:
+                ram_path = os.path.join(ram_adobe, sub)
+                mirror_path = os.path.join(self.mirror_root, sub)
+                if os.path.isdir(ram_path):
+                    os.makedirs(mirror_path, exist_ok=True)
+                    _run(["/usr/bin/rsync", *flags, f"{ram_path}/", f"{mirror_path}/"])
+            if now - self.last_mirror_prune >= 86400:
+                self.last_mirror_prune = now
+                self._prune_old_mirror_files()
         return True
 
-    def trim_if_pressured(self, pressure=1):
-        """Kritik bellek baskısı (`pressure >= 4`) olursa RAM-Diski önce SSD'ye yedekler, ardından
-        en eski geçici dosyaları RAM-Diskten temizler."""
+    def _prune_old_mirror_files(self):
+        """SSD aynasında 45 günden uzun süredir dokunulmayan eski önbellekleri temizler (PTX hariç)."""
+        cutoff = time.time() - MIRROR_MAX_AGE_DAYS * 86400
+        for sub in SCRATCH_DIRS:
+            if sub == "PTX":
+                continue
+            mirror_path = os.path.join(self.mirror_root, sub)
+            if not os.path.isdir(mirror_path):
+                continue
+            for dp, _, fn in os.walk(mirror_path, topdown=False):
+                for f in fn:
+                    if f == ".metadata_never_index":
+                        continue
+                    p = os.path.join(dp, f)
+                    try:
+                        if os.stat(p).st_mtime < cutoff:
+                            os.remove(p)
+                    except OSError:
+                        pass
+
+    def trim_if_pressured(self, pressure=1, mem_pct=0.0):
+        """Bellek baskısı (`pressure >= 2` veya yüksek RAM) ya da doluluk %80'i aşarsa RAM-Diskten
+        en eski dosyaları SSD aynasına güvenle aktardıktan sonra RAM-Diskten temizler."""
         if not self.is_mounted():
             return 0
-        if pressure < 4 and self.used_bytes() < int(self.size_gb * 0.8 * (1024 ** 3)):
+        used = self.used_bytes()
+        cap_bytes = int(self.size_gb * (1024 ** 3))
+        over_cap = used >= int(cap_bytes * 0.80)
+        critical_cap = used >= int(cap_bytes * 0.90)
+        pressured_trim = (pressure >= 2 or mem_pct >= 80.0) and used >= 256 * 1024 * 1024
+        if pressure < 4 and not over_cap and not pressured_trim:
             return 0
-        self.sync_to_ssd(force=True)
+
+        # Önce RAM-Diskteki güncel veriyi SSD aynasına (--delete OLMADAN) kaydet:
+        self.sync_to_ssd(force=True, mirror_delete=False)
         ram_adobe = os.path.join(self.mount_point, "AdobeCommon")
+        now = time.time()
         files = []
         for dp, _, fn in os.walk(ram_adobe):
             for f in fn:
@@ -201,12 +251,15 @@ class UltraScratchManager:
                 p = os.path.join(dp, f)
                 try:
                     st = os.stat(p)
+                    # Kritik doluluk veya pressure >= 4 değilse son 10 dakikada dokunulan aktif önbelleği koru:
+                    if not critical_cap and pressure < 4 and (now - st.st_mtime) < HOT_FILE_PROTECT_S:
+                        continue
                     files.append((st.st_mtime, st.st_size, p))
                 except OSError:
                     continue
         files.sort()  # en eskiler önce
         freed = 0
-        target_free = int(self.size_gb * 0.4 * (1024 ** 3))
+        target_free = int(cap_bytes * 0.40)
         for _, sz, p in files:
             try:
                 os.remove(p)
@@ -215,6 +268,8 @@ class UltraScratchManager:
                     break
             except OSError:
                 pass
+        if freed > 0:
+            log.info("Ultra-Scratch baskı tahliyesi: %.1f MB RAM serbest bırakıldı (SSD aynası korundu).", freed / (1024 * 1024))
         return freed
 
     def used_bytes(self):
@@ -226,20 +281,42 @@ class UltraScratchManager:
         except OSError:
             return 0
 
-    def tick(self, pressure=1):
+    def tick(self, pressure=1, mem_pct=0.0, active_editing=False, rendering=False):
         if not self.is_mounted():
             self.ensure_mounted()
-        else:
-            self.sync_to_ssd(force=False)
-            if pressure >= 4:
-                self.trim_if_pressured(pressure=pressure)
+            return
+        if not self.symlinks_healthy() and not rendering:
+            self.ensure_mounted()
+        used = self.used_bytes()
+        over_cap = used >= int(self.size_gb * 0.80 * (1024 ** 3))
+        # Aktif render veya kurgu oynatması sırasında (doluluk %80'i geçmedikçe) rsync G/Ç çakışması yaratma:
+        if not rendering and not active_editing:
+            self.sync_to_ssd(force=False, mirror_delete=False)
+        elif over_cap:
+            self.sync_to_ssd(force=True, mirror_delete=False)
+        if pressure >= 2 or mem_pct >= 80.0 or over_cap:
+            self.trim_if_pressured(pressure=pressure, mem_pct=mem_pct)
+
+    def status_dict(self):
+        mounted = self.is_mounted()
+        used_mb = round(self.used_bytes() / (1024 * 1024), 1) if mounted else 0.0
+        pct = round((used_mb / (self.size_gb * 1024.0)) * 100.0, 1) if mounted and self.size_gb else 0.0
+        return {
+            "mounted": mounted,
+            "mount_point": self.mount_point,
+            "size_gb": self.size_gb,
+            "used_mb": used_mb,
+            "used_pct": pct,
+            "symlinks_ok": self.symlinks_healthy() if mounted else False,
+        }
 
     def report(self):
-        if not self.is_mounted():
+        st = self.status_dict()
+        if not st["mounted"]:
             return "Ultra-Scratch (400 GB/s APFS RAM-Disk): şu an bağlı değil."
-        used_mb = self.used_bytes() / (1024 * 1024)
+        link_txt = "tüm bağlar sağlam" if st["symlinks_ok"] else "bağlar onarılıyor"
         return (
             f"Ultra-Scratch (400 GB/s APFS RAM-Disk): Aktif ({self.mount_point}) | "
-            f"Kapasite: {self.size_gb} GB (ince-tahsisli, kullanılan: {used_mb:.1f} MB) | "
-            f"Yönlendirilen önbellekler: {', '.join(SCRATCH_DIRS)} (SSD kalıcı aynalı)."
+            f"Kapasite: {self.size_gb} GB (ince-tahsisli, kullanılan: {st['used_mb']:.1f} MB / %{st['used_pct']:.1f}) | "
+            f"Yönlendirilen önbellekler: {', '.join(SCRATCH_DIRS)} ({link_txt}, SSD kalıcı aynalı)."
         )

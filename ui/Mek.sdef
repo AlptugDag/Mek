@@ -7,8 +7,8 @@
         </command>
     </suite>
 
-    <suite name="Mek Suite" code="MEKS" description="Mek asistanı ve Apple Intelligence sistem denetimi komutları.">
-        <command name="durum" code="MEKSSTAT" description="Mek sistem, donanım ve kurgu durumu raporunu döner.">
+    <suite name="Mek Suite" code="MEKS" description="Mek performans, donanım ömrü ve sistem denetimi komutları.">
+        <command name="durum" code="MEKSSTAT" description="Mek sistem, donanım ve performans durumu raporunu döner.">
             <cocoa class="MekScriptCommand"/>
             <result type="text" description="Sistem durumu raporu."/>
         </command>
@@ -44,58 +44,24 @@
             <result type="text" description="Yanıt sonucu."/>
         </command>
 
-        <command name="kurguModu" code="MEKSPROF" description="Kurgu yazılımları için Tier-0 tam performans modunu etkinleştirir.">
+        <command name="performansModu" code="MEKSPROF" description="Sistem ve tüm uygulamalar için Tier-0 tam performans ve donanım korumasını etkinleştirir.">
             <cocoa class="MekScriptCommand"/>
-            <result type="text" description="Kurgu modu sonucu."/>
+            <result type="text" description="Performans optimizasyonu sonucu."/>
+        </command>
+
+        <command name="saglik" code="MEKSHLTH" description="CPU/GPU/NVMe SSD sıcaklıkları, fan RPM, bellek ve disk ömrü raporunu döner.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Donanım ömrü ve sağlık raporu."/>
+        </command>
+
+        <command name="analiz" code="MEKSANLZ" description="Cihaz içi Apple Foundation Models ile performans ve donanım ömrü analizi yapar.">
+            <cocoa class="MekScriptCommand"/>
+            <result type="text" description="Apple Foundation Models analiz raporu."/>
         </command>
 
         <command name="fanSessiz" code="MEKSFANS" description="Termal fan kontrolünü Akıllı Sessiz kipe alır.">
             <cocoa class="MekScriptCommand"/>
             <result type="text" description="Fan kipi sonucu."/>
-        </command>
-
-        <command name="kurgu" code="MEKSKRG1" description="Premiere Pro ve DaVinci Resolve aktif proje/sekans durumunu bildirir.">
-            <cocoa class="MekScriptCommand"/>
-            <result type="text" description="Kurgu durumu raporu."/>
-        </command>
-
-        <command name="kurguOptimize" code="MEKSKRGO" description="Kurgu ortamını optimize eder (P-core önceliği, Ultra-Scratch, sessiz fan, purge).">
-            <cocoa class="MekScriptCommand"/>
-            <result type="text" description="Kurgu optimizasyonu sonucu."/>
-        </command>
-
-        <command name="davinciRender" code="MEKSDVRN" description="DaVinci Resolve Deliver sayfasındaki render kuyruğunu başlatır.">
-            <cocoa class="MekScriptCommand"/>
-            <result type="text" description="DaVinci render sonucu."/>
-        </command>
-
-        <command name="premiereExport" code="MEKSPMEX" description="Premiere Pro aktif sekansını Adobe Media Encoder kuyruğuna gönderir.">
-            <cocoa class="MekScriptCommand"/>
-            <result type="text" description="Dışa aktarma sonucu."/>
-        </command>
-
-        <command name="kurguSessizlik" code="MEKSKRGS" description="Ses kaydındaki sessizlikleri tespit edip kesim noktaları çıkarır.">
-            <cocoa class="MekScriptCommand"/>
-            <direct-parameter type="text" description="Ses dosyasının tam dosya yolu."/>
-            <result type="text" description="Sessizlik analizi ve kesim özeti."/>
-        </command>
-
-        <command name="kurguRenk" code="MEKSRNK1" description="İkonik film rengini (Matrix, Blade Runner, Oppenheimer vb.) 3D LUT olarak üretip kurguya uygular.">
-            <cocoa class="MekScriptCommand"/>
-            <direct-parameter type="text" description="Film veya stil adı (örn: Matrix, Blade Runner, Oppenheimer)."/>
-            <result type="text" description="Renk derecelendirme sonucu."/>
-        </command>
-
-        <command name="kurguEfekt" code="MEKSEFX1" description="Doğal dille tarif edilen sinematik görsel efekti üretip uygular.">
-            <cocoa class="MekScriptCommand"/>
-            <direct-parameter type="text" description="Efekt tarifi (örn: rüya gibi yumuşak parıltı ve gren)."/>
-            <result type="text" description="Efekt sentezi sonucu."/>
-        </command>
-
-        <command name="kurguKaba" code="MEKSKBA1" description="Nefes ve sessizlikleri temizleyip Premiere ve DaVinci için otonom FCPXML/EDL kaba kurgu üretir.">
-            <cocoa class="MekScriptCommand"/>
-            <direct-parameter type="text" description="Medya dosyası veya klasör yolu."/>
-            <result type="text" description="Kaba kurgu montaj sonucu."/>
         </command>
     </suite>
 </dictionary>

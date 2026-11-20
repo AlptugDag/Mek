@@ -22,8 +22,6 @@ public enum MekSocketBridge {
         var tv = timeval(tv_sec: timeoutSeconds, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
-        // Karşı taraf soketi kapattığında write() SIGPIPE ile süreci
-        // öldürmesin; hata olarak EPIPE dönsün.
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
 
@@ -49,7 +47,6 @@ public enum MekSocketBridge {
         }
 
         let payload = Array((command.trimmingCharacters(in: .whitespacesAndNewlines) + "\n").utf8)
-        // write() kısmi yazabilir; tamamı gidene kadar döngüde kal.
         var sent = 0
         while sent < payload.count {
             let n = payload.withUnsafeBytes { buf -> Int in
@@ -63,8 +60,6 @@ public enum MekSocketBridge {
                 return "Mek: Komut servise yazılamadı."
             }
         }
-        // Yazma yönünü kapat: Python tarafı recv() ile EOF görüp komutun
-        // bittiğini anlar (bin/jarvis'teki `nc -U` ile aynı davranış).
         shutdown(fd, SHUT_WR)
 
         var responseData = Data()
@@ -110,26 +105,14 @@ public final class MekScriptCommand: NSScriptCommand {
             return MekSocketBridge.execute("sor " + query)
         } else if cmd == "cevap" {
             return MekSocketBridge.execute("cevap " + direct)
-        } else if cmd == "kurgumodu" {
-            return MekSocketBridge.execute("odak zorla")
+        } else if cmd == "performansmodu" || cmd == "optimize" {
+            return MekSocketBridge.execute("performans")
+        } else if cmd == "donanimsagi" || cmd == "saglik" {
+            return MekSocketBridge.execute("sağlık")
+        } else if cmd == "analiz" || cmd == "aianaliz" {
+            return MekSocketBridge.execute("analiz")
         } else if cmd == "fansessiz" {
             return MekSocketBridge.execute("fan sessiz")
-        } else if cmd == "kurgu" {
-            return MekSocketBridge.execute("kurgu durum")
-        } else if cmd == "kurguoptimize" {
-            return MekSocketBridge.execute("kurgu optimize")
-        } else if cmd == "davincirender" {
-            return MekSocketBridge.execute("kurgu render")
-        } else if cmd == "premiereexport" {
-            return MekSocketBridge.execute("kurgu export")
-        } else if cmd == "kurgusessizlik" {
-            return MekSocketBridge.execute("kurgu sessizlik " + direct)
-        } else if cmd == "kurgurenk" {
-            return MekSocketBridge.execute("kurgu renk " + direct)
-        } else if cmd == "kurguefekt" {
-            return MekSocketBridge.execute("kurgu efekt " + direct)
-        } else if cmd == "kurgukaba" {
-            return MekSocketBridge.execute("kurgu kaba " + direct)
         }
         return MekSocketBridge.execute(direct.isEmpty ? cmd : "\(cmd) \(direct)")
     }
@@ -140,7 +123,7 @@ public final class MekScriptCommand: NSScriptCommand {
 @available(macOS 13.0, *)
 public struct MekStatusIntent: AppIntent {
     public static var title: LocalizedStringResource = "Mek Durumu"
-    public static var description = IntentDescription("Mek sistem, donanım, kalkan ve kurgu durumunu bildirir.")
+    public static var description = IntentDescription("Mek sistem, donanım, kalkan ve performans durumunu bildirir.")
     public static var openAppWhenRun: Bool = false
 
     public init() {}
@@ -237,29 +220,43 @@ public struct MekCommandIntent: AppIntent {
 }
 
 @available(macOS 13.0, *)
-public struct MekEditingModeIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Kurgu Modu"
-    public static var description = IntentDescription("Kurgu yazılımları için tam performans modunu etkinleştirir.")
+public struct MekPerformanceModeIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Performans Modu"
+    public static var description = IntentDescription("Sistem ve tüm uygulamalar için tam performans ve donanım korumasını etkinleştirir.")
     public static var openAppWhenRun: Bool = false
 
     public init() {}
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu optimize")
+        let result = MekSocketBridge.execute("performans")
         return .result(dialog: IntentDialog(stringLiteral: result))
     }
 }
 
 @available(macOS 13.0, *)
-public struct MekEditingStatusIntent: AppIntent {
-    public static var title: LocalizedStringResource = "Mek Kurgu Durumu"
-    public static var description = IntentDescription("Premiere Pro ve DaVinci Resolve aktif proje durumunu bildirir.")
+public struct MekHardwareHealthIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Donanım Sağlığı"
+    public static var description = IntentDescription("CPU/GPU/NVMe SSD sıcaklıkları, fan RPM, bellek ve disk ömrü özetini bildirir.")
     public static var openAppWhenRun: Bool = false
 
     public init() {}
 
     public func perform() async throws -> some IntentResult & ProvidesDialog {
-        let result = MekSocketBridge.execute("kurgu durum")
+        let result = MekSocketBridge.execute("sağlık")
+        return .result(dialog: IntentDialog(stringLiteral: result))
+    }
+}
+
+@available(macOS 13.0, *)
+public struct MekAIAnalyzeIntent: AppIntent {
+    public static var title: LocalizedStringResource = "Mek Sistem Analizi"
+    public static var description = IntentDescription("Cihaz içi Apple Foundation Models ile performans ve donanım ömrü analizi yapar.")
+    public static var openAppWhenRun: Bool = false
+
+    public init() {}
+
+    public func perform() async throws -> some IntentResult & ProvidesDialog {
+        let result = MekSocketBridge.execute("analiz")
         return .result(dialog: IntentDialog(stringLiteral: result))
     }
 }
@@ -320,24 +317,34 @@ public struct MekShortcuts: AppShortcutsProvider {
             systemImageName: "sparkle"
         )
         AppShortcut(
-            intent: MekEditingModeIntent(),
+            intent: MekPerformanceModeIntent(),
             phrases: [
-                "\(.applicationName) kurgu modu",
-                "\(.applicationName) kurgu modunu aç",
-                "\(.applicationName) kurguya hazırlan"
+                "\(.applicationName) performans modu",
+                "\(.applicationName) sistemi hızlandır",
+                "\(.applicationName) optimize et"
             ],
-            shortTitle: "Mek Kurgu Modu",
-            systemImageName: "film"
+            shortTitle: "Mek Performans",
+            systemImageName: "bolt.fill"
         )
         AppShortcut(
-            intent: MekEditingStatusIntent(),
+            intent: MekHardwareHealthIntent(),
             phrases: [
-                "\(.applicationName) kurgu durumu",
-                "\(.applicationName) hangi projede çalışıyorum",
-                "\(.applicationName) kurguda ne var"
+                "\(.applicationName) donanım sağlığı",
+                "\(.applicationName) sıcaklık",
+                "\(.applicationName) sistem ömrü"
             ],
-            shortTitle: "Mek Kurgu Durumu",
-            systemImageName: "timeline.selection"
+            shortTitle: "Mek Sağlık",
+            systemImageName: "cpu"
+        )
+        AppShortcut(
+            intent: MekAIAnalyzeIntent(),
+            phrases: [
+                "\(.applicationName) sistem analizi",
+                "\(.applicationName) analiz et",
+                "\(.applicationName) performans analizi"
+            ],
+            shortTitle: "Mek AI Analiz",
+            systemImageName: "brain.head.profile"
         )
     }
 }
@@ -348,13 +355,11 @@ public struct MekShortcuts: AppShortcutsProvider {
 final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
-    private var commandInProgress = false
     private var appIcon: NSImage?
     private var lastPromptedQuestionId: String? = nil
     private var questionPollTimer: Timer? = nil
 
     func applicationWillFinishLaunching(_ notification: Notification) {
-        // Raw Apple Event Suite Handler (MEKS: STAT, BRIF, CLEN, QRNT, ASKA, ANSW, PROF, FANS)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleMekAppleEvent(_:withReplyEvent:)),
@@ -362,7 +367,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
             andEventID: AEEventID(0x2A2A2A2A)      // '****' (typeWildCard)
         )
 
-        // URL Scheme Handler (mek://durum, mek://brifing, mek://temizle, mek://karantina, mek://sor?q=...)
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleGetURLEvent(_:withReplyEvent:)),
@@ -382,7 +386,6 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMenu.delegate = self
         statusItem.menu = statusMenu
 
-        // App Shortcuts ve Siri entegrasyonunu macOS sistemine bildir
         if #available(macOS 13.0, *) {
             MekShortcuts.updateAppShortcutParameters()
         }
@@ -391,19 +394,111 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startQuestionPolling()
     }
 
-    // MARK: - Dynamic Quarantine Menu (Kullanıcı Tıkladığında Canlı Listeleme)
+    // MARK: - Live Performance, Longevity & Quarantine Menu
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // 1. Durum Başlığı
-        let headerItem = NSMenuItem(title: "🛡️ Mek Kalkanı: Aktif (Sistem Korunuyor)", action: nil, keyEquivalent: "")
-        headerItem.isEnabled = false
-        menu.addItem(headerItem)
+        // 1. Canlı Performans & Donanım Sağlığı Bölümü
+        let rawStatus = MekSocketBridge.execute("status_json")
+        if let sData = rawStatus.data(using: .utf8),
+           let st = try? JSONSerialization.jsonObject(with: sData) as? [String: Any] {
+            let profile = (st["profile"] as? String ?? "normal").lowercased()
+            let profBadge: String
+            switch profile {
+            case "performance": profBadge = "⚡ Performans Modu (Tier-0 P-Core)"
+            case "ready":       profBadge = "🟢 Hazır Modu (Uygulama Beklemede)"
+            default:            profBadge = "🛡️ Mek Aktif (Dengeli Koruma)"
+            }
+            let hItem = NSMenuItem(title: profBadge, action: nil, keyEquivalent: "")
+            hItem.isEnabled = false
+            menu.addItem(hItem)
+
+            let cpu = st["cpu"] as? Double ?? 0
+            let gpuStr = (st["gpu"] as? Int).map { "%\($0)" } ?? "—"
+            let mem = st["mem_pct"] as? Double ?? 0
+            let swap = st["swap_gb"] as? Double ?? 0
+            let loadItem = NSMenuItem(
+                title: String(format: "  CPU %%%.0f  |  GPU %@  |  RAM %%%.0f  |  Takas %.1f GB", cpu, gpuStr, mem, swap),
+                action: nil, keyEquivalent: ""
+            )
+            loadItem.isEnabled = false
+            menu.addItem(loadItem)
+
+            var thermParts: [String] = []
+            if let cpuC = st["cpu_c"] as? Double { thermParts.append(String(format: "CPU %.0f°C", cpuC)) }
+            if let gpuC = st["gpu_c"] as? Double { thermParts.append(String(format: "GPU %.0f°C", gpuC)) }
+            if let ssdC = st["ssd_c"] as? Double { thermParts.append(String(format: "SSD %.0f°C", ssdC)) }
+            if let f0 = st["fan0_rpm"] as? Int, let f1 = st["fan1_rpm"] as? Int {
+                thermParts.append("Fan \(f0)/\(f1) RPM")
+            }
+            if !thermParts.isEmpty {
+                let tItem = NSMenuItem(title: "  " + thermParts.joined(separator: "  |  "), action: nil, keyEquivalent: "")
+                tItem.isEnabled = false
+                menu.addItem(tItem)
+            }
+
+            let scratchMounted = st["scratch_mounted"] as? Bool ?? false
+            let scratchMB = st["scratch_used_mb"] as? Double ?? 0
+            let scratchGB = st["scratch_size_gb"] as? Int ?? 12
+            let diskFree = st["disk_free_gb"] as? Double ?? 0
+            let scratchLabel = scratchMounted
+                ? String(format: "  RAM-Disk %.0f MB / %d GB  |  Boş SSD %.0f GB", scratchMB, scratchGB, diskFree)
+                : String(format: "  RAM-Disk kapalı  |  Boş SSD %.0f GB", diskFree)
+            let sItem = NSMenuItem(title: scratchLabel, action: nil, keyEquivalent: "")
+            sItem.isEnabled = false
+            menu.addItem(sItem)
+
+            let fmAvail = st["fm_available"] as? Bool ?? false
+            let fmItem = NSMenuItem(
+                title: fmAvail ? "  🧠 Apple Foundation Models: Hazır (Cihaz İçi)" : "  🧠 Apple Foundation Models: Kapalı",
+                action: nil, keyEquivalent: ""
+            )
+            fmItem.isEnabled = false
+            menu.addItem(fmItem)
+        } else {
+            let headerItem = NSMenuItem(title: "🛡️ Mek Kalkanı: Aktif (Sistem Korunuyor)", action: nil, keyEquivalent: "")
+            headerItem.isEnabled = false
+            menu.addItem(headerItem)
+        }
 
         menu.addItem(.separator())
 
-        // 2. Karantina Bölümü
+        // 2. Hızlı Performans & Ömür Eylemleri
+        let optItem = NSMenuItem(title: "⚡ Sistemi & Uygulamaları Optimize Et", action: #selector(runOptimize), keyEquivalent: "")
+        optItem.target = self
+        menu.addItem(optItem)
+
+        let fanParent = NSMenuItem(title: "🌀 Fan & Termal Kipi", action: nil, keyEquivalent: "")
+        let fanMenu = NSMenu()
+        for (title, mode) in [
+            ("Akıllı Sessiz (1100 RPM / >=52°C Otomatik)", "sessiz"),
+            ("Apple Fabrika Otomatik (1330 RPM taban)", "otomatik"),
+            ("Performans Ön-Soğutma (1800 RPM)", "performans"),
+        ] {
+            let fi = NSMenuItem(title: title, action: #selector(setFanMode(_:)), keyEquivalent: "")
+            fi.target = self
+            fi.representedObject = mode
+            fanMenu.addItem(fi)
+        }
+        fanParent.submenu = fanMenu
+        menu.addItem(fanParent)
+
+        let healthItem = NSMenuItem(title: "🩺 Donanım Ömrü & Bellek Raporu", action: #selector(showHealthReport), keyEquivalent: "")
+        healthItem.target = self
+        menu.addItem(healthItem)
+
+        let aiItem = NSMenuItem(title: "🧠 Apple AI Performans & Ömür Analizi", action: #selector(runAIAnalysis), keyEquivalent: "")
+        aiItem.target = self
+        menu.addItem(aiItem)
+
+        let cleanItem = NSMenuItem(title: "🧹 Akıllı Önbellek Temizliği Başlat", action: #selector(runClean), keyEquivalent: "")
+        cleanItem.target = self
+        menu.addItem(cleanItem)
+
+        menu.addItem(.separator())
+
+        // 3. Karantina Bölümü
         let qSectionHeader = NSMenuItem(title: "KARANTİNAYA ALINAN ÖĞELER", action: nil, keyEquivalent: "")
         qSectionHeader.isEnabled = false
         menu.addItem(qSectionHeader)
@@ -416,9 +511,9 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
            let items = obj["items"] as? [[String: Any]] {
             itemsCount = items.count
             if items.isEmpty {
-                let cleanItem = NSMenuItem(title: "  ✓ Karantina Temiz (0 Şüpheli Dosya)", action: nil, keyEquivalent: "")
-                cleanItem.isEnabled = false
-                menu.addItem(cleanItem)
+                let okItem = NSMenuItem(title: "  ✓ Karantina Temiz (0 Şüpheli Dosya)", action: nil, keyEquivalent: "")
+                okItem.isEnabled = false
+                menu.addItem(okItem)
             } else {
                 for item in items {
                     let no = item["no"] as? Int ?? 1
@@ -431,11 +526,9 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let mItem = NSMenuItem(title: itemTitle, action: nil, keyEquivalent: "")
 
                     let sub = NSMenu()
-
                     let origItem = NSMenuItem(title: "Orijinal Konum: \(orig)", action: nil, keyEquivalent: "")
                     origItem.isEnabled = false
                     sub.addItem(origItem)
-
                     sub.addItem(.separator())
 
                     let restoreItem = NSMenuItem(title: "Geri Yükle (Karantinadan Çıkar)", action: #selector(restoreQuarantineItem(_:)), keyEquivalent: "")
@@ -453,14 +546,13 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
         } else {
-            let cleanItem = NSMenuItem(title: "  ✓ Karantina Temiz (Tehdit Yok)", action: nil, keyEquivalent: "")
-            cleanItem.isEnabled = false
-            menu.addItem(cleanItem)
+            let okItem = NSMenuItem(title: "  ✓ Karantina Temiz (Tehdit Yok)", action: nil, keyEquivalent: "")
+            okItem.isEnabled = false
+            menu.addItem(okItem)
         }
 
         menu.addItem(.separator())
 
-        // 3. Karantina Klasör Eylemleri
         let openFolderItem = NSMenuItem(title: "📂 Karantina Klasörünü Aç...", action: #selector(openQuarantineFolder), keyEquivalent: "")
         openFolderItem.target = self
         menu.addItem(openFolderItem)
@@ -473,17 +565,42 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        // 4. Siri Entegrasyonu Rehberi
         let siriItem = NSMenuItem(title: "🎙️ Siri: \"Hey Siri, Mek\"", action: #selector(siriGuide), keyEquivalent: "")
         siriItem.target = self
         menu.addItem(siriItem)
 
         menu.addItem(.separator())
 
-        // 5. Çıkış
         let quitItem = NSMenuItem(title: "Mek'i Kapat", action: #selector(quit), keyEquivalent: "")
         quitItem.target = self
         menu.addItem(quitItem)
+    }
+
+    @objc private func runOptimize() {
+        let res = MekSocketBridge.execute("performans")
+        showResult(res)
+    }
+
+    @objc private func setFanMode(_ sender: NSMenuItem) {
+        guard let mode = sender.representedObject as? String else { return }
+        let res = MekSocketBridge.execute("fan \(mode)")
+        showResult(res)
+    }
+
+    @objc private func showHealthReport() {
+        let h = MekSocketBridge.execute("sağlık")
+        let b = MekSocketBridge.execute("bellek")
+        showResult(h + "\n\n" + b)
+    }
+
+    @objc private func runAIAnalysis() {
+        let res = MekSocketBridge.execute("analiz")
+        showResult(res)
+    }
+
+    @objc private func runClean() {
+        let res = MekSocketBridge.execute("temizle")
+        showResult(res)
     }
 
     @objc private func restoreQuarantineItem(_ sender: NSMenuItem) {
@@ -524,10 +641,11 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Sesle:
         • "Hey Siri, Mek"  → Mek ne istediğinizi sorar
         • "Hey Siri, Mek durum"
+        • "Hey Siri, Mek performans modu"
+        • "Hey Siri, Mek donanım sağlığı"
+        • "Hey Siri, Mek temizlik yap"
         • "Hey Siri, Mek brifing"
         • "Hey Siri, Mek karantinada ne var"
-        • "Hey Siri, Mek kurgu modu"
-        • "Hey Siri, Mek temizlik yap"
 
         Yazarak:
         Sistem Ayarları > Erişilebilirlik > Siri > "Siri'ye Yazın" açık olsun. \
@@ -563,8 +681,10 @@ final class MekMenuBar: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if eventID == 0x414E5357 { // ANSW: cevap
             let a = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue ?? ""
             cmd = "cevap " + a
-        } else if eventID == 0x50524F46 { // PROF: kurguModu
-            cmd = "odak zorla"
+        } else if eventID == 0x50524F46 { // PROF: performansModu
+            cmd = "performans"
+        } else if eventID == 0x484C5448 { // HLTH: donanimSagligi
+            cmd = "sağlık"
         } else if eventID == 0x46414E53 { // FANS: fanSessiz
             cmd = "fan sessiz"
         }

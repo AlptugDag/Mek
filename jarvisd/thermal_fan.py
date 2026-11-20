@@ -34,10 +34,15 @@ log = logging.getLogger("mek.thermal")
 
 CPU_SENSOR_KEYS = ("Tp01", "Tp05", "Tp09", "Tp0D", "Tp0T")
 GPU_SENSOR_KEYS = ("Tg05", "Tg0D", "Tg0L", "Tg0T")
+SSD_SENSOR_KEYS = ("TH0a", "TH0b", "TH0x")
+PSU_SENSOR_KEYS = ("Tp0C",)
 FAN_SILENT_RPM = 1100.0      # AppleSMC F0Mn/F1Mn donanım güvenli minimum devri
 TEMP_SILENT_MAX_C = 50.0     # Bu sıcaklığın altında 1100 RPM sessiz kip korunur
 TEMP_AUTO_RELEASE_C = 52.0   # Bu sıcaklığa ulaşıldığında anında donanımsal otomatik SMC eğrisine geçilir
 TEMP_PRECOOL_C = 72.0        # Ağır render'da throttling'i önlemek için ön-soğutma eşiği
+TEMP_HOT_BOOST_C = 82.0      # Render olmasa bile yüksek çekirdek sıcaklığında donanım ömrü için ön-soğutma
+SSD_AUTO_RELEASE_C = 55.0    # NVMe NAND ömrü için SSD bu sıcaklığa çıkarsa otomatik fana geç
+SSD_BOOST_C = 65.0           # NVMe NAND koruma eşiği: ön-soğutma başlat
 
 
 class _SMCKeyDataVers(ctypes.Structure):
@@ -180,9 +185,11 @@ class ThermalFanController:
         self.last_adjust = 0.0
 
     def telemetry(self):
-        """Anlık CPU/GPU sıcaklıklarını (°C) ve Sol/Sağ fan devirlerini (RPM) döndürür."""
+        """Anlık CPU/GPU/NVMe SSD/PSU sıcaklıklarını (°C) ve Sol/Sağ fan devirlerini (RPM) döndürür."""
         cpu_temps = [v for k in CPU_SENSOR_KEYS if (v := self.smc.read_key(k)) is not None and 10.0 < v < 125.0]
         gpu_temps = [v for k in GPU_SENSOR_KEYS if (v := self.smc.read_key(k)) is not None and 10.0 < v < 125.0]
+        ssd_temps = [v for k in SSD_SENSOR_KEYS if (v := self.smc.read_key(k)) is not None and 10.0 < v < 110.0]
+        psu_temps = [v for k in PSU_SENSOR_KEYS if (v := self.smc.read_key(k)) is not None and 10.0 < v < 110.0]
         f0_actual = self.smc.read_key("F0Ac")
         f1_actual = self.smc.read_key("F1Ac")
         f0_min = self.smc.read_key("F0Mn") or FAN_SILENT_RPM
@@ -192,12 +199,16 @@ class ThermalFanController:
 
         cpu_max = round(max(cpu_temps), 1) if cpu_temps else None
         gpu_max = round(max(gpu_temps), 1) if gpu_temps else None
+        ssd_max = round(max(ssd_temps), 1) if ssd_temps else None
+        psu_max = round(max(psu_temps), 1) if psu_temps else None
         all_temps = cpu_temps + gpu_temps
         peak_c = round(max(all_temps), 1) if all_temps else None
 
         data = {
             "cpu_c": cpu_max,
             "gpu_c": gpu_max,
+            "ssd_c": ssd_max,
+            "psu_c": psu_max,
             "peak_c": peak_c,
             "fan0_rpm": round(f0_actual) if f0_actual is not None else None,
             "fan1_rpm": round(f1_actual) if f1_actual is not None else None,
@@ -226,12 +237,18 @@ class ThermalFanController:
             return False
 
     def tick(self, rendering=False, thermal_state=0):
-        """Her döngüde sıcaklığı denetler; ısınma varsa anında otomatik SMC korumasına geçer."""
+        """Her döngüde CPU/GPU ve NVMe SSD sıcaklığını denetler; ısınma varsa anında korumaya geçer."""
         t = self.telemetry()
         peak = t.get("peak_c")
+        ssd_c = t.get("ssd_c")
 
-        # 1. Güvenlik önceliği: Sıcaklık >= 52°C ise veya termal uyarı varsa veya kullanıcı 'auto' seçtiyse
-        if self.user_mode == "boost" or (rendering and peak is not None and peak >= TEMP_PRECOOL_C):
+        # 1. Donanım ömrü & güvenlik önceliği: yüksek sıcaklık veya NVMe ısınmasında anında soğutma
+        if (
+            self.user_mode == "boost"
+            or (rendering and peak is not None and peak >= TEMP_PRECOOL_C)
+            or (peak is not None and peak >= TEMP_HOT_BOOST_C)
+            or (ssd_c is not None and ssd_c >= SSD_BOOST_C)
+        ):
             desired = "boost"
         elif (
             self.user_mode == "auto"
@@ -239,6 +256,7 @@ class ThermalFanController:
             or thermal_state >= 1
             or peak is None
             or peak >= TEMP_AUTO_RELEASE_C
+            or (ssd_c is not None and ssd_c >= SSD_AUTO_RELEASE_C)
         ):
             desired = "auto"
         elif peak <= TEMP_SILENT_MAX_C:
@@ -305,11 +323,17 @@ class ThermalFanController:
             "auto": "Fabrika Otomatik (1330 RPM taban)",
             "boost": "Performans Ön-Soğutma (1800 RPM)",
         }.get(self.user_mode, self.user_mode)
+        extra_sensors = []
+        if t.get("ssd_c") is not None:
+            extra_sensors.append(f"NVMe SSD {t['ssd_c']}°C")
+        if t.get("psu_c") is not None:
+            extra_sensors.append(f"PSU/Kasa {t['psu_c']}°C")
+        extra_txt = (", " + ", ".join(extra_sensors)) if extra_sensors else ""
         return (
-            f"Termal & Fan Durumu: CPU {t['cpu_c']}°C, GPU {t['gpu_c']}°C | "
+            f"Termal & Fan Durumu: CPU {t['cpu_c']}°C, GPU {t['gpu_c']}°C{extra_txt} | "
             f"Sol Fan: {t['fan0_rpm']} RPM, Sağ Fan: {t['fan1_rpm']} RPM "
             f"(Hedef: {t['fan_target_rpm']} RPM, Güvenli Min: {t['fan_min_rpm']} RPM) | "
             f"Kip: {mode_tr}. "
-            f"(Not: Mac Studio'da 370W PSU ve SSD'ler aynı hava tünelinden soğuduğu için 0 RPM donanıma zarar verir; "
+            f"(Not: Mac Studio'da 370W PSU ve NVMe SSD'ler aynı hava tünelinden soğuduğu için 0 RPM donanıma zarar verir; "
             f"1100 RPM tamamen duyulmaz ve %100 güvenlidir.)"
         )

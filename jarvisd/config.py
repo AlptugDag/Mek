@@ -37,6 +37,9 @@ DEFAULTS = {
     "memory_reserve_gb": 10,          # macOS + tarayıcı vb. için ağır uygulamalara hiç verilmeyen bellek
     "memory_overcommit": 1.2,         # aynı anda açık uygulamalar nadiren aynı anda tepe yapar
     "memory_relief": True,            # bellek sıkışınca boştaki ağır uygulama için soru sor
+    "llm_auto_unload_idle_min": 15,   # baskı altında boşta kalan Ollama modelini bellekten düşürme süresi
+    "prewarm_max_mem_pct": 65.0,      # RAM bu oranın üzerindeyken sayfa önbelleği ön-ısıtması yapma
+    "quiet_allow_security": False,    # sessiz saatlerde kritik güvenlik/madenci bildirimleri bile sesli olmasın (yalnızca UI bildirimi)
     "trusted_processes": ["adb", "scrcpy"],  # havuz portu uyarısı verilmeyecek programlar
     "market_watchlist": [],           # ör. ["THYAO.IS", "AAPL"]
     "market_alert_pct": {"XU100.IS": 1.5, "TRY=X": 0.8, "GAU": 1.5, "BTC-USD": 4.0, "default": 3.0},
@@ -135,12 +138,14 @@ def secret(name, env_var=None):
     return None
 
 
-def set_values(**values):
-    """Verilen ayarları jarvis.json'a atomik olarak işler ve yeni ayarları döner."""
+def set_values(_mapping=None, **values):
+    """Verilen ayarları jarvis.json'a atomik olarak işler ve birleştirilmiş güncel ayarları döner."""
     cfg = _read_json(CONFIG_FILE)
+    if isinstance(_mapping, dict):
+        cfg.update(_mapping)
     cfg.update(values)
     save(cfg)
-    return cfg
+    return load()
 
 
 def save(cfg):

@@ -2,17 +2,19 @@
 """Kurgu ve Render Motorları İçin Sürümden Bağımsız İç Yapılandırma İyileştiricisi (App Tuner).
 
 Premiere Pro, After Effects, Media Encoder, Audition, Photoshop, DynamicLink, DaVinci Resolve ve
-Topaz Video AI uygulamalarının kendi iç motor parametrelerini (Debug Database.txt, XML tercihleri,
-Multi-Frame Rendering ve Metal GPU havuz ayarlarını) M1 Max (10 CPU çekirdeği, 32 GPU çekirdeği,
-64 GB Birleşik Bellek ve Çift ProRes Motoru) mimarisi için en yüksek hıza ayarlar.
+Topaz Video uygulamalarının iç motor parametrelerini (Debug Database.txt, XML tercihleri,
+Multi-Frame Rendering, Apple Silicon Birleşik Bellek Metal GPU havuzları ve donanım decode/encode
+ayarlarını) M1 Max (10 CPU çekirdeği, 32 GPU çekirdeği, 64 GB Birleşik Bellek ve Çift Medya
+Motoru) mimarisi için en yüksek hız ve kararlılığa ayarlar.
 
-Sürümden bağımsızdır: 2025, 2026, 2030 veya gelecekte kurulacak tüm sürüm klasörlerini otomatik
-tarar ve yalnızca ilgili uygulama kapalıyken güvenli biçimde günceller.
+Sürümden bağımsızdır: 2025, 2026, 2027, 2030 veya gelecekte kurulacak tüm sürüm klasörlerini
+otomatik tarar ve yalnızca ilgili uygulama kapalıyken atomik biçimde günceller.
 """
 import glob
 import logging
 import os
 import re
+import subprocess
 import tempfile
 
 import psutil
@@ -20,17 +22,17 @@ import psutil
 log = logging.getLogger("mek.app_tuner")
 HOME = os.path.expanduser("~")
 
-# Adobe Debug Database.txt içinde M1 Max birleşik bellek ve Metal GPU mimarisi için
-# en yüksek kurgu, önizleme, decode ve render hızını sağlayan anahtar-değer çiftleri.
+# Adobe Debug Database.txt içinde M1 Max 64 GB birleşik bellek ve Metal GPU mimarisi için
+# çift havuzlamayı (OOM/çökme) önleyen, kararlı ve en yüksek hızlı parametreler.
 ADOBE_DEBUG_DB_OVERRIDES = {
     # After Effects / DynamicLink / MOGRT render'larını tek kareye (1) kilitleyen darboğazı kaldır:
     "ExporterCalcMaxRequests.OverrideMaxRequests": "",
-    # Apple Silicon Birleşik Bellek + Metal Heap + Sıfır Kopya (Zero-Copy) GPU Havuzu:
-    "GF.DisableMemoryPooling": "false",
-    "GF.UseMetalHeap": "true",
+    # Apple Silicon Birleşik Bellek + Metal (çift havuzlamayı önleyerek RAM taşması ve çökmeyi keser):
+    "GF.DisableMemoryPooling": "true",
+    "GF.UseMetalHeap": "false",
     "GF.Metal": "true",
     "GF.EnableZeroCopy": "true",
-    "Afterburner.EnableZeroCopy": "true",
+    "Afterburner.EnableZeroCopy": "false",
     "Lumetri.Metal": "true",
     "EnableGPUDebayer": "true",
     "GF.Metal.EnableFlushlessEvent": "true",
@@ -38,14 +40,14 @@ ADOBE_DEBUG_DB_OVERRIDES = {
     "GF.DisableAcceleratedRenderer": "false",
     "GF.DisableAcceleratedDisplay": "false",
     "GF.DisableGPUFrameCache": "false",
-    # M1 Max 64 GB RAM + Çift Medya Motoru için Decode, Önizleme ve Asenkron Kare Kuyrukları:
-    "CodecSupport.MCDecoderPoolSize": "12",
-    "MediaCoreAsyncFrameCount3": "32",
-    "PlayerMain.MaxOutstandingPendingAheadOfPlayback": "24",
-    "DecodeQueue.IOThreadsPerQueue": "16",
-    "GF.DeviceAssetCachePercent": "45",
-    "GF.DeviceSoftPoolFactor": "75",
-    "GF.HostPoolFactor": "30",
+    # M1 Max Çift Medya Motoru için Dengeli Decode, Scrubbing ve Asenkron Kare Kuyrukları:
+    "CodecSupport.MCDecoderPoolSize": "6",
+    "MediaCoreAsyncFrameCount3": "16",
+    "PlayerMain.MaxOutstandingPendingAheadOfPlayback": "16",
+    "DecodeQueue.IOThreadsPerQueue": "8",
+    "GF.DeviceAssetCachePercent": "20",
+    "GF.DeviceSoftPoolFactor": "50",
+    "GF.HostPoolFactor": "10",
     "DVACompute.ShouldUseObjectSelectionAsync": "true",
     # Uygulama Açılışı ve Eklenti/Ses Tarama Hızlandırıcıları:
     "ML.UseKnownPluginsCache": "true",
@@ -82,9 +84,30 @@ PREMIERE_XML_OVERRIDES = {
     "BE.Prefs.MediaIntelligence.AnalyzeImportedMediaForFace": "false",
 }
 
+# DaVinci Resolve config.user.xml performans etiketleri:
+RESOLVE_USER_XML_OVERRIDES = {
+    "IsStopRenderOnError": "false",
+    "PerfModeOptDecode": "true",
+    "FusionMemoryCacheMode": "FUSION_MEMORY_CACHE_MODE_AUTO",
+    "IsOptimizeUiUpdatesForAudioPlugins": "true",
+    "IsCopyRenderCacheWhenDupTimelines": "false",
+    "AutoCacheDeleteMode": "1",
+}
+
+# Topaz Video performans defaults anahtarları:
+TOPAZ_DEFAULTS_OVERRIDES = {
+    "gpuDeviceID": 0,
+    "hardwareDecodingEnabled": 1,
+    "powerSaverMode": 0,
+    "liveExportEnabled": 0,
+    "exportWithLivePreviewEnabled": 0,
+    "fileLoggingEnabled": 0,
+    "allowAnonymousDataCollection": 0,
+}
+
 
 def _running_adobe_families():
-    """Şu anda açık olan Adobe uygulama ailelerini döndürür (açık uygulamanın dosyasına dokunulmaz)."""
+    """Şu anda açık olan kurgu uygulama ailelerini döndürür (açık uygulamanın dosyasına dokunulmaz)."""
     open_fams = set()
     for p in psutil.process_iter(["name", "exe"]):
         try:
@@ -101,6 +124,10 @@ def _running_adobe_families():
             open_fams.add("audition")
         if "photoshop" in target:
             open_fams.add("photoshop")
+        if "davinci" in target or "/resolve" in target:
+            open_fams.add("resolve")
+        if "topaz video" in target or "topaz" in target and "veai" in target:
+            open_fams.add("topaz")
     return open_fams
 
 
@@ -116,16 +143,20 @@ def _family_of_path(path):
         return "audition"
     if "/ps/" in low or "photoshop" in low:
         return "photoshop"
+    if "davinci resolve" in low:
+        return "resolve"
     return None
 
 
 def _atomic_write(path, content, encoding="utf-8"):
-    d = os.path.dirname(path)
+    d = os.path.dirname(path) or "."
     st = os.stat(path) if os.path.exists(path) else None
     fd, tmp = tempfile.mkstemp(prefix=".mek_tune_", dir=d)
     try:
         with os.fdopen(fd, "w", encoding=encoding, newline="") as f:
             f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         if st is not None:
             os.chmod(tmp, st.st_mode & 0o777)
         os.replace(tmp, path)
@@ -159,8 +190,6 @@ def tune_debug_database_file(path, overrides=None):
         key = parts[0].strip()
         if key in overrides and len(parts) >= 2:
             desired = overrides[key]
-            # ExporterCalcMaxRequests.OverrideMaxRequests gibi varsayılanı boş olan bayraklarda
-            # varsayılan sütunu varsa onu koru, birinci değer sütununu desired yap:
             if parts[1] != desired:
                 parts[1] = desired
                 changed += 1
@@ -176,7 +205,7 @@ def tune_debug_database_file(path, overrides=None):
 
 
 def _latest_installed_premiere_app(apps_dir="/Applications"):
-    """Kurulu en güncel Adobe Premiere Pro .app yolunu bulur (2026, 2030 vb. sürümden bağımsız)."""
+    """Kurulu en güncel Adobe Premiere Pro .app yolunu bulur (2026, 2027, 2030 vb. sürümden bağımsız)."""
     candidates = sorted(
         glob.glob(os.path.join(apps_dir, "Adobe Premiere Pro*", "Adobe Premiere Pro*.app"))
         + glob.glob(os.path.join(apps_dir, "Adobe Premiere Pro*.app"))
@@ -204,6 +233,25 @@ def tune_premiere_prefs_file(path, latest_app=None):
             updated = new_text
             changes += count
 
+    # CoreAudio kesintisiz oynatma (dropout/cızırtı önleyici blok boyutu ve çıkış kipi):
+    new_text, n_blk = re.subn(
+        r'("abe\.io\.audio\.coreaudio\.ioblocksize":\s*)(?!1024\b)\d+',
+        r"\g<1>1024",
+        updated,
+    )
+    if n_blk:
+        updated = new_text
+        changes += n_blk
+
+    new_text, n_out = re.subn(
+        r'("abe\.io\.audio\.outputonly":\s*)false\b',
+        r"\g<1>true",
+        updated,
+    )
+    if n_out:
+        updated = new_text
+        changes += n_out
+
     # Eski sürümden (2023/2024 vb.) kalmış kırık uygulama içi dosya yollarını güncel sürüme onar:
     if latest_app is None:
         latest_app = _latest_installed_premiere_app()
@@ -228,7 +276,7 @@ def tune_premiere_prefs_file(path, latest_app=None):
 
 
 def tune_after_effects_prefs_file(path):
-    """Adobe After Effects Prefs.txt içinde Multi-Frame Rendering ve telemetri ayarlarını iyileştirir."""
+    """Adobe After Effects Prefs.txt içinde Multi-Frame Rendering, 3D çoklu işlem ve telemetriyi iyileştirir."""
     try:
         with open(path, "r", encoding="utf-8", errors="ignore", newline="") as f:
             raw = f.read()
@@ -240,6 +288,9 @@ def tune_after_effects_prefs_file(path):
     replacements = (
         (r'("Enable Concurrent Frame Renders"\s*=\s*)00', r"\g<1>01"),
         (r'("Log BEE Commands Into AdobePIP"\s*=\s*)01', r"\g<1>00"),
+        (r'("Enable Multiprocessing"\s*=\s*)"0"', r'\g<1>"1"'),
+        # 10 çekirdekli M1 Max'te arayüz donmadan en yüksek MFR verimi (%10 rezerv):
+        (r'("Reserved CPU Power"\s*=\s*)"(?:0|2[5-9]|[3-9]\d)"', r'\g<1>"10"'),
     )
     for pattern, repl in replacements:
         new_text, count = re.subn(pattern, repl, updated)
@@ -252,12 +303,94 @@ def tune_after_effects_prefs_file(path):
     return changes
 
 
+def tune_resolve_prefs(home=HOME):
+    """DaVinci Resolve config.user.xml ve config.dat performans parametrelerini iyileştirir."""
+    pref_dir = os.path.join(home, "Library", "Preferences", "Blackmagic Design", "DaVinci Resolve")
+    if not os.path.isdir(pref_dir):
+        return 0
+    changes = 0
+    user_xml = os.path.join(pref_dir, "config.user.xml")
+    if os.path.isfile(user_xml):
+        try:
+            with open(user_xml, "r", encoding="utf-8", errors="ignore", newline="") as f:
+                raw = f.read()
+            updated = raw
+            for tag, val in RESOLVE_USER_XML_OVERRIDES.items():
+                pat = re.compile(rf"(<{re.escape(tag)}>)(.*?)(</{re.escape(tag)}>)", re.S)
+                new_text, count = pat.subn(
+                    lambda m: m.group(0) if m.group(2).strip() == val else f"{m.group(1)}{val}{m.group(3)}",
+                    updated,
+                )
+                if new_text != updated:
+                    updated = new_text
+                    changes += count
+            if updated != raw:
+                _atomic_write(user_xml, updated)
+        except OSError:
+            pass
+
+    for cfg_name in ("config.dat", ".config.data"):
+        cfg_path = os.path.join(pref_dir, cfg_name)
+        if not os.path.isfile(cfg_path):
+            continue
+        try:
+            with open(cfg_path, "r", encoding="latin-1", newline="") as f:
+                raw = f.read()
+            new_text, count = re.subn(
+                r"^(Bg\.Tasks\.EnableBgTranscription\s*=\s*)(?!0\b).+$",
+                r"\g<1>0",
+                raw,
+                flags=re.M,
+            )
+            if count and new_text != raw:
+                _atomic_write(cfg_path, new_text, encoding="latin-1")
+                changes += count
+        except OSError:
+            pass
+    return changes
+
+
+def tune_topaz_prefs(runner=subprocess.run):
+    """Topaz Video donanım çözme ve güç verimliliği ayarlarını (uygulama kapalıyken) optimize eder."""
+    domain = "com.topazlabs.Topaz Video"
+    try:
+        probe = runner(["/usr/bin/defaults", "read", domain, "gpuDeviceID"],
+                       capture_output=True, text=True, timeout=5)
+        if probe.returncode != 0:
+            return 0
+    except Exception:
+        return 0
+
+    changed = 0
+    for key, val in TOPAZ_DEFAULTS_OVERRIDES.items():
+        try:
+            cur = runner(["/usr/bin/defaults", "read", domain, key],
+                         capture_output=True, text=True, timeout=5)
+            if cur.returncode == 0 and cur.stdout.strip() == str(val):
+                continue
+            w = runner(["/usr/bin/defaults", "write", domain, key, "-int", str(val)],
+                       capture_output=True, text=True, timeout=5)
+            if w.returncode == 0:
+                changed += 1
+        except Exception:
+            continue
+    return changed
+
+
 def tune_all(home=HOME, apps_dir="/Applications", open_families=None):
     """Tüm kurgu uygulamalarının (tüm mevcut ve gelecek sürümlerinin) iç motor ayarlarını optimize eder."""
     if open_families is None:
         open_families = _running_adobe_families()
 
-    summary = {"debug_db_files": 0, "debug_db_keys": 0, "xml_files": 0, "xml_keys": 0, "ae_files": 0}
+    summary = {
+        "debug_db_files": 0,
+        "debug_db_keys": 0,
+        "xml_files": 0,
+        "xml_keys": 0,
+        "ae_files": 0,
+        "resolve_keys": 0,
+        "topaz_keys": 0,
+    }
     adobe_prefs_root = os.path.join(home, "Library", "Preferences", "Adobe")
     adobe_docs_root = os.path.join(home, "Documents", "Adobe")
 
@@ -292,6 +425,14 @@ def tune_all(home=HOME, apps_dir="/Applications", open_families=None):
         for ae_path in glob.glob(os.path.join(adobe_prefs_root, "After Effects", "*", "Adobe After Effects * Prefs.txt")):
             if tune_after_effects_prefs_file(ae_path) > 0:
                 summary["ae_files"] += 1
+
+    # 4. DaVinci Resolve tercihleri
+    if "resolve" not in open_families:
+        summary["resolve_keys"] = tune_resolve_prefs(home=home)
+
+    # 5. Topaz Video tercihleri (yalnızca gerçek sistem dizininde çalışırken)
+    if home == HOME and "topaz" not in open_families:
+        summary["topaz_keys"] = tune_topaz_prefs()
 
     if any(summary.values()):
         log.info("Kurgu motoru iç parametreleri optimize edildi: %s", summary)

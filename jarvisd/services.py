@@ -5,12 +5,14 @@ Kural: kaynak, gerçekten iş yapan uygulamaya. Bir kurgu uygulamasının yalnı
 "performans" kipine sokmaz; önde kullanılıyor ya da render/dışa aktarma yapıyor olması gerekir.
 
 Profiller:
-  performance  - kurgu/fotoğraf uygulaması önde ya da render sürüyor: o uygulama arka plan kısıtından
-                 çıkarılır (8 P-çekirdeğin tamamı ona verilir), arka planda boşta bekleyen diğer
-                 ağır uygulamalar ve tüm eklenti/eşitleme süreçleri (CEPHtmlEngine vb.) E-çekirdeklere
-                 park edilir. Render sürüyorsa sistem uykuya geçmez (ekran uyuyabilir).
-  ready        - kurgu uygulaması açık ama arka planda boşta: boşta bekleyen ağır uygulamalar E-çekirdekte
-                 ve App Nap altında sessizce bekler; sistem kaynaklarını sömürmez.
+  performance  - kurgu/fotoğraf uygulaması önde ya da render sürüyor: o uygulama 8 P-çekirdeğin tamamına
+                 ve Tier-0 G/Ç önceliğine alınır; başka bir kurgu uygulaması arka planda boştaysa
+                 yalnızca o ikincil süreç Tier-3 kademesine çekilir (ASLA DARWIN_BG'ye sokulmaz).
+                 Kaçak CEPHtmlEngine (>%15 CPU), MxContentService, sistem indeksleyicileri ve bulut
+                 senkronizasyonu E-çekirdeklere sabitlenir. Render sürüyorsa sistem uykuya geçmez.
+  ready        - kurgu uygulaması açık ama arka planda boşta: tek kurgu uygulaması açıksa Tier-0'da
+                 sarsıntısız bekler (sıfır taskpolicy gidip-gelmesi), sistem kaynaklarını sömüren
+                 arka plan süreçleri E-çekirdekte tutulur.
   normal       - kurgu uygulaması yok: her şey eski haline döner, yetim yardımcı süreçler temizlenir.
 """
 import logging
@@ -32,11 +34,14 @@ from config import (
     STATE_DIR,
 )
 import app_tuner
+import config
 import context as ctx
+import llm_ram
 from prewarmer import PreWarmer
-from project_timemachine import ProjectTimeMachine
 from thermal_fan import ThermalFanController
 from ultra_scratch import UltraScratchManager
+
+is_llm_process = llm_ram.is_llm_process
 
 log = logging.getLogger("mek.services")
 UID = os.getuid()
@@ -49,9 +54,15 @@ ADOBE_MARKETING_BLOAT_RE = re.compile(
     re.I,
 )
 
+# Ana kurgu/oynatma P-çekirdeklerini çalan eklenti arka plan panelleri (her zaman E-çekirdeğe sabitlenir):
+CREATIVE_BG_PANEL_RE = re.compile(
+    r"MxContentService|com\.redgiant\.uni\.dashboard",
+    re.I,
+)
+
 # Kurgu uygulamaları, eklentiler (Red Giant, Maxon, BorisFX, Dehancer, FxFactory, Laforge, CEP/UXP)
 # ve bunların bağlı olduğu IPC/lisans/köprü servisleri:
-# Hangi sürümde (2026, 2030 vb.) olursa olsun ASLA taskpolicy -b (DARWIN_BG) altına alınmaz!
+# Hangi sürümde (2026, 2027, 2030 vb.) olursa olsun ASLA taskpolicy -b (DARWIN_BG) altına alınmaz!
 CREATIVE_IPC_RE = re.compile(
     r"CEPHtmlEngine|UXP|AdobeIPCBroker|dynamiclinkmanager|AdobeQTServer|TeamProjectsLocalHub|"
     r"PProHeadless|aerender|AEGPUSniffer|Adobe Desktop Service|CCLibrary|Core Sync|"
@@ -156,9 +167,10 @@ def _lineage_pids(root_pids, ppids):
                 changed = True
     return tree - set(root_pids)
 
+
 RENDER_CPU = 280.0     # 10 çekirdekli M1 Max'te çok çekirdekli gerçek render eşiği (boşta CEP spin'i ~150%'dir)
 IDLE_GRACE_S = 45      # önden çekildikten sonra performans kipinde kalma süresi
-BG_PARK_DELAY_S = 12   # arka plana düşen boşta kurgu uygulamasını E-çekirdeğe park etme gecikmesi
+BG_PARK_DELAY_S = 15   # başka bir kurgu uygulaması aktifken arka plandaki ikincil kurgu uygulamasını Tier-3'e alma gecikmesi
 PURGE_COOLDOWN_S = 180 # iki otomatik RAM önbellek temizliği (purge) arası en az süre
 
 
@@ -188,13 +200,27 @@ def _pids(rx, snap=None):
     return out
 
 
+def _supports_highpowermode():
+    def _probe():
+        try:
+            r = subprocess.run(["/usr/bin/pmset", "-g", "custom"], capture_output=True, text=True, timeout=3)
+            return "highpowermode" in (r.stdout or "").lower()
+        except Exception:
+            return False
+    return bool(ctx._cached("supports_highpowermode", 86400, _probe))
+
+
 def priv(*args):
     """Ayrıcalıklı yardımcıyı parolasız çalıştırır (kuruluysa)."""
     if not os.path.exists(PRIV_HELPER):
         return False
     r = subprocess.run(["sudo", "-n", PRIV_HELPER, *args], capture_output=True, text=True)
     if r.returncode != 0:
-        log.warning("mek-priv %s başarısız: %s", args, r.stderr.strip())
+        err = (r.stderr or "").strip()
+        if err:
+            log.warning("mek-priv %s başarısız: %s", args, err)
+        else:
+            log.debug("mek-priv %s sıfır dışı döndü (%d)", args, r.returncode)
     return r.returncode == 0
 
 
@@ -220,22 +246,23 @@ class ServiceManager:
         self.stopped_agents = []
         self.last_active = 0.0
         self.boosted = set()          # Tam öncelikteki (Tier-0 I/O ve gecikme) aktif kurgu süreçleri
-        self.parked_pro = set()       # Arka planda boşta bekleyen ikincil kurgu süreçleri (DARWIN_BG'ye sokulmaz)
+        self.parked_pro = set()       # Başka bir kurgu aktifken Tier-3'e alınmış ikincil kurgu süreçleri
+        self.pro_tier = {}            # pid -> uygulanan taskpolicy tier (0 veya 3); gereksiz syscall'ı önler
         self.pro_last_active = {}     # pid -> son aktif (önde/render) zamanı
         self.unthrottled_ipc = set()  # DARWIN_BG'den çıkarıldığı doğrulanmış kurgu/eklenti/IPC yardımcıları
-        self.clamped = set()          # E-çekirdeğe alınan bulut/eşitleme süreçleri
+        self.clamped = set()          # E-çekirdeğe alınan bulut/eşitleme/kaçak panel süreçleri
         self.bg_clamped = set()       # E-çekirdeğe alınan sistem indeksleme süreçleri
         self.next_guard = 0.0
         self.next_tune = 0.0
-        self.next_tm_scan = 0.0
+        self.next_scratch_tick = 0.0
         self.last_adobe_seen = time.time()
         self.last_purge = 0.0
         self.last_front_pro = None
         self.prewarmer = PreWarmer()
         self.ultra_scratch = UltraScratchManager()
-        self.timemachine = ProjectTimeMachine()
         self.thermal_fan = ThermalFanController()
-        priv("restore-high-power")
+        if _supports_highpowermode():
+            priv("restore-high-power")
         self._ensure_plugin_services()
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
@@ -245,9 +272,23 @@ class ServiceManager:
     def _tune_and_prewarm_bg(self):
         try:
             self.ultra_scratch.ensure_mounted()
-            self.timemachine.scan_and_snapshot()
+            cfg = config.load()
             app_tuner.tune_all()
-            self.prewarmer.tick_async(pressure=1, mem_pct=50.0)
+            pressure = ctx.memory_pressure() if hasattr(ctx, "memory_pressure") else 1
+            if isinstance(pressure, dict):
+                pressure = int(pressure.get("level", 1))
+            mem_pct = psutil.virtual_memory().percent
+            swap_gb = psutil.swap_memory().used / (1024 ** 3)
+            llm_gb = llm_ram.inspect(check_ollama=True).get("total_gb", 0.0)
+            self.prewarmer.tick_async(
+                pressure=pressure,
+                mem_pct=mem_pct,
+                llm_gb=llm_gb,
+                max_mem_pct=float(cfg.get("prewarm_max_mem_pct", 65.0)),
+                busy_editing=(self.profile == "performance"),
+                rendering=False,
+                swap_gb=swap_gb,
+            )
         except Exception as e:
             log.warning("Başlangıç kurgu motoru optimizasyonu hatası: %s", e)
 
@@ -272,35 +313,123 @@ class ServiceManager:
     # --- yardımcı QoS işlemleri ---------------------------------------------------
     def _unpark_pro(self, pid, snap=None):
         """Kurgu sürecini ve alt süreç ağacını arka plan kısıtından çıkarıp tam P-çekirdek/Tier-0 önceliğine alır."""
-        if pid in self.parked_pro or pid not in self.boosted:
+        if self.pro_tier.get(pid) != 0 or pid not in self.boosted:
             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
             _renice_safe(pid, 0)
+            self.pro_tier[pid] = 0
             self.parked_pro.discard(pid)
             self.boosted.add(pid)
             log.info("Kurgu süreci tam performansa alındı (P-çekirdek, Tier-0 I/O): pid=%d", pid)
         if snap is not None and getattr(snap, "ppids", None):
+            proc_map = {r[0]: (r[1], r[2], r[3]) for r in getattr(snap, "procs", ())}
             for child_pid in _lineage_pids({pid}, snap.ppids):
+                name, cmd, cpu = proc_map.get(child_pid, ("", "", 0.0))
+                target = cmd or name or ""
+                if (
+                    ADOBE_MARKETING_BLOAT_RE.search(target)
+                    or CREATIVE_BG_PANEL_RE.search(target)
+                    or ("CEPHtmlEngine" in target and cpu > 15.0)
+                ):
+                    continue
                 if child_pid not in self.unthrottled_ipc:
                     _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(child_pid)])
                     _renice_safe(child_pid, 0)
                     self.unthrottled_ipc.add(child_pid)
 
     def _park_pro(self, pid, name="", secondary=False):
-        """Arka planda boşta duran kurgu sürecini 'hazır/beklemede' olarak işaretler.
-        Başka bir kurgu uygulaması aktif olarak önde/render'daysa (secondary=True), geri alınabilir
-        Tier-3 throughput/latency kademesine (-B -t 3 -l 3) çeker; tek kurgu uygulaması açıksa Tier-0'da tutar.
-        ÖNEMLİ: Kurgu süreçlerine ASLA taskpolicy -b (PRIO_DARWIN_BG) veya pozitif nice uygulanmaz."""
-        if pid not in self.parked_pro:
-            tier = "3" if secondary else "0"
-            _run(["/usr/sbin/taskpolicy", "-B", "-t", tier, "-l", tier, "-p", str(pid)])
+        """Arka planda boşta duran ikincil kurgu sürecini yönetir.
+
+        - Başka bir kurgu uygulaması aktif olarak önde/render'daysa (`secondary=True`), ikincil
+          boştaki süreci geri alınabilir Tier-3 kademesine (`-B -t 3 -l 3`) çeker.
+        - Tek kurgu uygulaması açıksa (ör. Finder/Safari'ye kısa geçiş), Tier-0'da sarsıntısız
+          tutulur ve gereksiz `taskpolicy` gidip-gelmesi (thrashing) yapılmaz!
+        - ÖNEMLİ: Kurgu süreçlerine ASLA `taskpolicy -b` (PRIO_DARWIN_BG) veya pozitif nice uygulanmaz.
+        """
+        if not secondary:
+            # Tek kurgu uygulaması açıkken Tier-3'e düşmüşse Tier-0'a geri çıkar, zaten Tier-0 ise dokunma:
+            if self.pro_tier.get(pid) == 3:
+                _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+                self.pro_tier[pid] = 0
+                self.parked_pro.discard(pid)
+                self.boosted.add(pid)
+            return
+
+        if self.pro_tier.get(pid) != 3 or pid not in self.parked_pro:
+            _run(["/usr/sbin/taskpolicy", "-B", "-t", "3", "-l", "3", "-p", str(pid)])
+            self.pro_tier[pid] = 3
             self.boosted.discard(pid)
             self.parked_pro.add(pid)
-            log.info("Arka planda boşta bekleyen kurgu süreci bekleme kipine (Tier-%s) alındı: %s (pid=%d)",
-                     tier, name or "pro", pid)
+            log.info("Arka planda boşta bekleyen ikincil kurgu süreci Tier-3 kademesine alındı: %s (pid=%d)",
+                     name or "pro", pid)
+
+    def force_focus_mode(self, snap=None):
+        """Performans modunu anında etkinleştirir: tüm aktif profesyonel/ağır süreçleri ve eklenti
+        IPC'lerini Tier-0 P-çekirdeklere açar, arka plan gürültüsünü E-çekirdeklere sabitler."""
+        self.last_active = time.time()
+        if self.profile != "performance":
+            self.enter_performance()
+        if snap is None:
+            try:
+                snap = ctx.snapshot()
+            except Exception:
+                snap = None
+        if snap is not None:
+            self.guard(snap)
+            for pid, exe, _cpu, _rss in getattr(snap, "pro_procs", ()):
+                self.pro_last_active[pid] = self.last_active
+                self._unpark_pro(pid, snap)
+        self.ultra_scratch.ensure_mounted()
+        return True
+
+    def optimize_now(self, snap=None):
+        """Bilgisayar ve tüm uygulamalar için tek dokunuşluk tam performans & donanım koruması uygular."""
+        actions = []
+        self.force_focus_mode(snap)
+        actions.append("Tier-0 P-Core tahsisi ve arka plan yalıtımı etkin")
+
+        if self.ultra_scratch.ensure_mounted():
+            st = self.ultra_scratch.status_dict()
+            actions.append(f"Ultra-Scratch 400 GB/s RAM-Disk hazır ({st['used_mb']:.0f} MB / {st['size_gb']} GB)")
+
+        tel = self.thermal_fan.telemetry()
+        peak = tel.get("peak_c") or 0.0
+        ssd_c = tel.get("ssd_c") or 0.0
+        if peak >= 68.0 or ssd_c >= 60.0:
+            self.thermal_fan.set_mode("performans")
+            actions.append(f"yüksek sıcaklık (CPU/GPU {peak:.0f}°C, SSD {ssd_c:.0f}°C) nedeniyle fan ön-soğutmada")
+        else:
+            self.thermal_fan.set_mode("sessiz")
+            actions.append("Akıllı Sessiz Fan koruması (1100 RPM taban)")
+
+        try:
+            tuned = app_tuner.tune_all()
+            if any(tuned.values()):
+                actions.append("kapalı uygulama motor ayarları tazelendi")
+        except Exception:
+            pass
+
+        try:
+            pressure = ctx.memory_pressure()
+            if pressure >= 2:
+                info = llm_ram.inspect(check_ollama=True)
+                if info.get("ollama_cpu", 0.0) < 8.0 and info.get("ollama_models"):
+                    unloaded = []
+                    for m in info["ollama_models"]:
+                        mname = m.get("name") or m.get("model")
+                        if mname and llm_ram.ollama_unload(mname):
+                            unloaded.append(mname)
+                    if unloaded:
+                        actions.append(f"boştaki Ollama indirildi ({', '.join(unloaded)})")
+                if self.smart_purge("performans optimizasyonu"):
+                    actions.append("bellek baskısı nedeniyle akıllı önbellek rahatlatıldı")
+        except Exception:
+            pass
+
+        return "Sistem ve uygulamalar optimize edildi: " + ", ".join(actions) + "."
 
     def smart_purge(self, reason="kritik bellek baskısı"):
-        """Yalnızca kritik çekirdek bellek baskısında (pressure >= 4) çalıştırılır.
-        Normal kullanımda dosya önbelleği (Unified Buffer Cache) ASLA sıfırlanmaz."""
+        """Yalnızca kritik çekirdek bellek baskısında (pressure >= 4) veya açık kullanıcı isteğinde
+        çalıştırılır. Normal kullanımda dosya önbelleği (Unified Buffer Cache) ASLA sıfırlanmaz."""
         now = time.time()
         if now - self.last_purge < PURGE_COOLDOWN_S:
             return False
@@ -358,13 +487,14 @@ class ServiceManager:
             if is_this_front:
                 self.pro_last_active[ppid] = now
                 self._unpark_pro(ppid, snap)
-            else:
+            elif focused_is_pro:
                 is_rendering = (cpu >= RENDER_CPU) or bool(RENDER_ENGINE_RE.search(exe) and cpu >= 50.0)
                 if not is_rendering:
-                    # Yalnızca başka bir kurgu uygulaması öndeyse (focused_is_pro=True) ikincil Tier-3'e al
-                    self._park_pro(ppid, app_of(exe), secondary=focused_is_pro)
+                    # Yalnızca başka bir kurgu uygulaması öndeyse ikincil kurgu uygulamasını Tier-3'e al
+                    self._park_pro(ppid, app_of(exe), secondary=True)
 
         if focused_is_pro:
+            self.last_active = now
             if self.last_front_pro and self.last_front_pro != front_lower and snap is not None:
                 # Yalnızca kırmızı/kritik bellek baskısı (pressure >= 4) varsa purge çalıştır;
                 # normal geçişlerde birleşik RAM dosya önbelleği korunur!
@@ -389,9 +519,16 @@ class ServiceManager:
                     log.info("Adobe telemetri/çökme raporlama süreci yüksek CPU nedeniyle sonlandırıldı: %s pid=%d (%%%.0f)",
                              name or "helper", pid, cpu)
                     continue
+                # Kaçak CEPHtmlEngine (>%15 CPU yakan panel döngüleri), MxContentService ve
+                # com.redgiant.uni.dashboard ana kurgu/oynatma P-çekirdeklerini çalmasın diye E-çekirdeğe sabitlenir:
+                if CREATIVE_BG_PANEL_RE.search(target) or ("CEPHtmlEngine" in target and cpu > 15.0):
+                    alive_bloat.add(pid)
+                    if pid not in self.clamped:
+                        _run(["/usr/sbin/taskpolicy", "-b", "-p", str(pid)])
+                    continue
                 # Kurgu paketleri, alt süreç ağaçları, eklentiler ve bağlı servisler (Red Giant, Maxon,
-                # BorisFX, Dehancer, FxFactory, CEPHtmlEngine, dynamiclinkmanager vb.) kesinlikle kısıtlanmaz;
-                # aksine tam performansa (Tier-0, P-çekirdek) açılır!
+                # BorisFX, Dehancer, FxFactory, sağlıklı CEPHtmlEngine, dynamiclinkmanager vb.) kesinlikle
+                # kısıtlanmaz; aksine tam performansa (Tier-0, P-çekirdek) açılır!
                 if (pid in lineage or is_creative_or_plugin(target)) and not ADOBE_MARKETING_BLOAT_RE.search(target):
                     if pid in lineage or CREATIVE_IPC_RE.search(target) or is_creative_or_plugin(target):
                         alive_ipc.add(pid)
@@ -431,24 +568,6 @@ class ServiceManager:
 
     def tick(self, snap, rendering=False):
         now = time.time()
-        if now >= self.next_guard:
-            self.next_guard = now + 30
-            self.guard(snap)
-        if now >= self.next_tm_scan:
-            self.next_tm_scan = now + 30
-            threading.Thread(
-                target=self._periodic_scratch_and_tm,
-                args=(getattr(snap, "pressure", 1),),
-                daemon=True,
-            ).start()
-        if now >= self.next_tune:
-            self.next_tune = now + 900
-            self.prewarmer.tick_async(
-                pressure=getattr(snap, "pressure", 1),
-                mem_pct=getattr(snap, "mem_pct", 0.0),
-            )
-        self.thermal_fan.tick(rendering=rendering, thermal_state=getattr(snap, "thermal", 0))
-
         working = self.working_pids(snap)
         working_set = set(working)
         for pid in working_set:
@@ -467,15 +586,49 @@ class ServiceManager:
             {"performance": self.enter_performance, "ready": self.enter_ready,
              "normal": self.enter_normal}[target]()
 
-        # Aktif (öndeki veya render yapan) kurgu süreçlerini ve alt eklenti ağacını Tier-0'a aç,
-        # arka planda boşta bekleyen ikincil kurgu süreçlerini ise (başka bir kurgu aktifse) Tier-3'e al!
+        active_editing = (self.profile == "performance") or bool(working_set) or bool(rendering)
+
+        if now >= self.next_guard:
+            self.next_guard = now + 30
+            self.guard(snap)
+        if now >= self.next_scratch_tick:
+            self.next_scratch_tick = now + 30
+            threading.Thread(
+                target=self._periodic_scratch,
+                args=(
+                    getattr(snap, "pressure", 1),
+                    getattr(snap, "mem_pct", 0.0),
+                    active_editing,
+                    bool(rendering),
+                ),
+                daemon=True,
+            ).start()
+        if now >= self.next_tune:
+            self.next_tune = now + 900
+            self.prewarmer.tick_async(
+                pressure=getattr(snap, "pressure", 1),
+                mem_pct=getattr(snap, "mem_pct", 0.0),
+                llm_gb=float(getattr(snap, "llm_gb", 0.0) or 0.0),
+                max_mem_pct=float(self.cfg.get("prewarm_max_mem_pct", 65.0)),
+                busy_editing=active_editing,
+                rendering=bool(rendering),
+                swap_gb=float(getattr(snap, "swap_gb", 0.0) or 0.0),
+                running_exes=getattr(snap, "exes", None),
+            )
+        self.thermal_fan.tick(rendering=rendering, thermal_state=getattr(snap, "thermal", 0))
+
+        # Aktif (öndeki veya render yapan) kurgu süreçlerini ve alt eklenti ağacını Tier-0'a aç;
+        # yalnızca başka bir kurgu uygulaması aktifse boştaki ikincil kurgu süreçlerini Tier-3'e al!
         for pid, exe, cpu, _ in getattr(snap, "pro_procs", ()):
             if pid in working_set:
                 self._unpark_pro(pid, snap)
-            else:
+            elif working_set:
                 last_act = self.pro_last_active.get(pid, 0.0)
-                if working_set or (now - last_act >= BG_PARK_DELAY_S):
-                    self._park_pro(pid, app_of(exe), secondary=bool(working_set))
+                if now - last_act >= BG_PARK_DELAY_S:
+                    self._park_pro(pid, app_of(exe), secondary=True)
+            else:
+                # Hiçbir kurgu uygulaması önde değilse tek/boştaki süreci Tier-0'da sarsıntısız tut
+                self._park_pro(pid, app_of(exe), secondary=False)
 
         # Yalnızca kırmızı/kritik çekirdek bellek baskısı (pressure >= 4) varsa purge çalıştır
         if snap.pro_pids and getattr(snap, "pressure", 1) >= 4:
@@ -484,6 +637,8 @@ class ServiceManager:
         live = set(snap.pro_pids)
         self.boosted &= live
         self.parked_pro &= live
+        for dead in set(self.pro_tier) - live:
+            self.pro_tier.pop(dead, None)
         for dead in set(self.pro_last_active) - live:
             self.pro_last_active.pop(dead, None)
 
@@ -544,6 +699,7 @@ class ServiceManager:
         self._release_clamps()
         self.boosted = set()
         self.parked_pro = set()
+        self.pro_tier = {}
         self.last_front_pro = None
         for plist in self.stopped_agents:
             _run(["/bin/launchctl", "bootstrap", f"gui/{UID}", plist])
@@ -555,16 +711,20 @@ class ServiceManager:
             subprocess.Popen([MASTER_SETUP], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         threading.Thread(target=self._tune_and_prewarm_bg, daemon=True).start()
 
-    def _periodic_scratch_and_tm(self, pressure=1):
+    def _periodic_scratch(self, pressure=1, mem_pct=0.0, active_editing=False, rendering=False):
         try:
-            self.timemachine.scan_and_snapshot()
-            self.ultra_scratch.tick(pressure=pressure)
+            self.ultra_scratch.tick(
+                pressure=pressure,
+                mem_pct=mem_pct,
+                active_editing=active_editing,
+                rendering=rendering,
+            )
         except Exception as e:
-            log.warning("Ultra-Scratch / Proje Zaman Makinesi döngü hatası: %s", e)
+            log.warning("Ultra-Scratch döngü hatası: %s", e)
 
     def shutdown(self):
         try:
-            self.ultra_scratch.sync_to_ssd(force=True)
+            self.ultra_scratch.sync_to_ssd(force=True, mirror_delete=False)
         except Exception:
             pass
         try:
@@ -573,9 +733,3 @@ class ServiceManager:
             pass
         if self.profile != "normal":
             self.enter_normal()
-
-    # --- bakım -----------------------------------------------------------------
-    # Not: Buradaki eski `cleaner_due`/`run_cleaner` çifti kaldırıldı. İkisini de
-    # kimse çağırmıyordu ve depoda bulunmayan ~/.local/bin/smart_system_cleaner.sh
-    # dosyasına bağlıydılar; temiz bir kuruluma o dosya hiç gelmiyordu. Gerçek
-    # temizliği jarvisd/cleaner.py yapıyor (bkz. Mek.clean_now).

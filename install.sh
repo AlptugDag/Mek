@@ -24,6 +24,10 @@ fi
 
 # --- dosyalar ---------------------------------------------------------------
 mkdir -p "$J/jarvisd" "$J/ai" "$J/state" "$J/legacy" "$BIN" "$LA"
+# Kaldırılan eski modülleri kurulu kopyadan da temizle:
+rm -f "$J/jarvisd/project_timemachine.py" "$J/jarvisd/kurgu.py" "$J/jarvisd/rough_cut.py" \
+      "$J/jarvisd/multicam_director.py" "$J/jarvisd/viral_hook.py" "$J/jarvisd/vision_color.py" \
+      "$J/jarvisd/premiere_gateway.py" "$J/jarvisd/neural_conductor.py"
 cp "$SRC"/jarvisd/*.py "$SRC"/jarvisd/*.sh "$J/jarvisd/"
 cp "$SRC/jarvis.py" "$J/"
 [ -f "$SRC/assets/mek.png" ] && cp "$SRC/assets/mek.png" "$J/mek.png"
@@ -87,7 +91,8 @@ Siri (Kestirmeler uygulaması olmadan, doğrudan):
   "Hey Siri, Mek durum"
   "Hey Siri, Mek brifing"
   "Hey Siri, Mek karantinada ne var"
-  "Hey Siri, Mek kurgu modu"
+  "Hey Siri, Mek performans modu"
+  "Hey Siri, Mek donanım sağlığı"
   Yazarak kullanmak için: Sistem Ayarları > Erişilebilirlik > Siri >
   "Siri'ye Yazın" seçeneğini açın.
 
