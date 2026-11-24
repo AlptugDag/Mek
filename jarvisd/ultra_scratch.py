@@ -127,6 +127,8 @@ class UltraScratchManager:
             open(os.path.join(fsev, "no_log"), "a").close()
             os.makedirs(os.path.join(self.mount_point, "AdobeCommon"), exist_ok=True)
             os.makedirs(os.path.join(self.mount_point, "ResolveScratch"), exist_ok=True)
+            os.makedirs(os.path.join(self.mount_point, "AlptuguideScratch"), exist_ok=True)
+            os.makedirs(os.path.join(self.mount_point, "BlenderCache"), exist_ok=True)
         except OSError:
             pass
 
@@ -292,7 +294,7 @@ class UltraScratchManager:
         # Aktif render veya kurgu oynatması sırasında (doluluk %80'i geçmedikçe) rsync G/Ç çakışması yaratma:
         if not rendering and not active_editing:
             self.sync_to_ssd(force=False, mirror_delete=False)
-        elif over_cap:
+        elif over_cap or pressure >= 4:
             self.sync_to_ssd(force=True, mirror_delete=False)
         if pressure >= 2 or mem_pct >= 80.0 or over_cap:
             self.trim_if_pressured(pressure=pressure, mem_pct=mem_pct)

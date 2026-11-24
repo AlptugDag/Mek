@@ -70,7 +70,7 @@ PRO_APP_PATTERN = (
     r"Topaz Video[^/]*|Topaz Photo[^/]*|Topaz Gigapixel[^/]*|Gigapixel[^/]*|ffmpeg|neuroserver|"
     r"Final Cut Pro[^/]*|Compressor[^/]*|Motion[^/]*|Logic Pro[^/]*|"
     r"Cinema 4D[^/]*|Blender[^/]*|Colourlab[^/]*|OBS[^/]*|HandBrake[^/]*"
-    r")|DaVinci Resolve Helper"
+    r")|DaVinci Resolve Helper|(?:^|/)(?:ffmpeg|sd-cli)(?:\s|$)"
 )
 
 # Kullanıcının yaratıcı uygulamaları, eklentileri ve eklenti servislerinin paket/dizinleri:
@@ -83,8 +83,9 @@ CREATIVE_BUNDLE_PATTERN = (
     r"Dehancer|Topaz[^/]*|Pro Sound Effects|Laforge[^/]*|FilmConvert[^/]*)"
     r"|/Library/OFX/Plugins"
     r"|/Library/Audio/Plug-Ins"
-    r"|/Users/[^/]+/Library/Application Support/(Adobe|Blackmagic Design|Red Giant|Maxon|BorisFX|"
+    r"|/Users/[^/]+/Library/Application Support/(Adobe|Alptuguide|Blackmagic Design|Red Giant|Maxon|BorisFX|"
     r"FxFactory|Dehancer|Topaz[^/]*))(/|$)"
+    r"|(?:Alptuguide|com\.alptug\.alptuguide|hyperframes|remotion|givemotion|VideoTurko|sd-cli)"
 )
 RENDER_PROCS = {
     "Topaz": r"Topaz[^/]*.*/(ffmpeg|neuroserver)",
@@ -93,6 +94,9 @@ RENDER_PROCS = {
     "Premiere (arka plan)": r"PProHeadless",
     "Compressor": r"Contents/MacOS/Compressor",
     "DaVinci Resolve": r"Contents/MacOS/Resolve",
+    "Blender 3D": r"Contents/MacOS/Blender",
+    "VideoTurko Metal": r"(?:^|/)sd-cli(?:\s|$)",
+    "Alptuguide Kurgu": r"(?:Alptuguide|com\.alptug\.alptuguide)/(?:engine|tools|envs|ext)",
 }
 
 

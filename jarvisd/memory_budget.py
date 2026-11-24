@@ -24,16 +24,19 @@ GIB = 1024 ** 3
 HOME = os.path.expanduser("~")
 
 APPS = {
-    "photoshop": {"name": "Photoshop", "solo": 0.60, "min_gb": 8,
+    "photoshop": {"name": "Photoshop", "solo": 0.60, "min_gb": 12,
                   "match": r"Contents/MacOS/(Adobe )?Photoshop"},
-    "adobe_video": {"name": "Premiere Pro / After Effects / Media Encoder", "solo": 0.70, "min_gb": 12,
+    "adobe_video": {"name": "Premiere Pro / After Effects / Media Encoder", "solo": 0.8125, "min_gb": 52,
                     "match": r"Contents/MacOS/(Adobe Premiere[^/]*|After Effects[^/]*|Adobe After Effects[^/]*|"
                              r"Adobe Media Encoder[^/]*|Adobe Audition[^/]*|PProHeadless)"},
-    "resolve": {"name": "DaVinci Resolve", "solo": 0.60, "min_gb": 12,
+    "resolve": {"name": "DaVinci Resolve", "solo": 0.74, "min_gb": 46,
                 "match": r"Contents/MacOS/(DaVinci )?Resolve"},
-    "topaz_video": {"name": "Topaz Video", "solo": 0.55, "min_gb": 8,
+    "topaz_video": {"name": "Topaz Video", "solo": 0.75, "min_gb": 24,
                     "match": r"Contents/MacOS/Topaz Video"},
+    "blender": {"name": "Blender", "solo": 0.50, "min_gb": 24,
+                "match": r"Contents/MacOS/Blender"},
 }
+SHARED_FLOOR_GB = 16  # paylaşımlı çalışmada Resolve/AI eklentileri için güvenli alt sınır (64 GB M1 Max)
 _MATCH = {k: re.compile(v["match"]) for k, v in APPS.items()}
 
 
@@ -61,7 +64,13 @@ def plan(total_gb, running, reserve_gb=10, overcommit=1.2, active=None):
         else:
             share = avail * overcommit / (others + 1)
         solo = min(avail, total_gb * spec["solo"])
-        out[key] = int(round(max(spec["min_gb"], min(solo, share))))
+        if others == 0:
+            # Tek başına: uygulamanın kendi tabanı geçerli.
+            out[key] = int(round(max(spec["min_gb"], min(solo, share))))
+        else:
+            # Paylaşımlı: taban, adil payı aşamaz (aksi halde 64 GB'da 98-122 GB söz verilir).
+            floor = min(spec["min_gb"], SHARED_FLOOR_GB)
+            out[key] = int(round(max(floor, min(solo, share))))
     return out
 
 
@@ -140,10 +149,11 @@ class MemoryBudget:
                 if new != text:
                     _atomic_write(path, new)
         elif key == "resolve":
+            target_mb = 47349 if gb >= 46 else int(gb * 1024)
             for path, rx in self._resolve_files():
                 if os.path.exists(path):
                     text = open(path, encoding="latin-1", newline="").read()
-                    new = re.sub(rx, lambda m: f"{m.group(1)}{int(gb * 1024)}", text, flags=re.M)
+                    new = re.sub(rx, lambda m: f"{m.group(1)}{target_mb}", text, flags=re.M)
                     if new != text:
                         _atomic_write(path, new, "latin-1")
 

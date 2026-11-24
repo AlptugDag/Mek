@@ -230,15 +230,17 @@ def _proc_scan():
                         exe = p.exe()
                     except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
                         exe = ""
-                if exe:
+                cmdline = info.get("cmdline")
+                if cmdline is None:
+                    try:
+                        cmdline = p.cmdline()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
+                        cmdline = []
+                if exe and cmdline and len(cmdline) > 1:
+                    cmd = f"{exe} {' '.join(cmdline[1:8])}".strip()
+                elif exe:
                     cmd = exe
                 else:
-                    cmdline = info.get("cmdline")
-                    if cmdline is None:
-                        try:
-                            cmdline = p.cmdline()
-                        except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
-                            cmdline = []
                     cmd = " ".join(cmdline or [])
                 _PROC_CACHE[pid] = (ctime, name, cmd, ppid)
             if not cmd and not name:

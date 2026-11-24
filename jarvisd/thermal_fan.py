@@ -37,12 +37,13 @@ GPU_SENSOR_KEYS = ("Tg05", "Tg0D", "Tg0L", "Tg0T")
 SSD_SENSOR_KEYS = ("TH0a", "TH0b", "TH0x")
 PSU_SENSOR_KEYS = ("Tp0C",)
 FAN_SILENT_RPM = 1100.0      # AppleSMC F0Mn/F1Mn donanım güvenli minimum devri
-TEMP_SILENT_MAX_C = 50.0     # Bu sıcaklığın altında 1100 RPM sessiz kip korunur
+TEMP_SILENT_MAX_C = 48.5     # Auto kipten sessiz kipe geri dönüş için soğuma eşiği (histerezis tabanı)
 TEMP_AUTO_RELEASE_C = 52.0   # Bu sıcaklığa ulaşıldığında anında donanımsal otomatik SMC eğrisine geçilir
 TEMP_PRECOOL_C = 72.0        # Ağır render'da throttling'i önlemek için ön-soğutma eşiği
 TEMP_HOT_BOOST_C = 82.0      # Render olmasa bile yüksek çekirdek sıcaklığında donanım ömrü için ön-soğutma
 SSD_AUTO_RELEASE_C = 55.0    # NVMe NAND ömrü için SSD bu sıcaklığa çıkarsa otomatik fana geç
 SSD_BOOST_C = 65.0           # NVMe NAND koruma eşiği: ön-soğutma başlat
+COOL_DOWN_HOLD_S = 60.0      # Auto/boost kipten tekrar silent kipe inmeden önce en az bekleme süresi (10sn'lik gidip gelmeyi önler)
 
 
 class _SMCKeyDataVers(ctypes.Structure):
@@ -182,7 +183,7 @@ class ThermalFanController:
         self.user_mode = "auto_silent"  # auto_silent | auto | boost
         self.applied_state = "unknown"  # silent | auto | boost
         self.last_telemetry = {}
-        self.last_adjust = 0.0
+        self.last_adjust = -1e9
 
     def telemetry(self):
         """Anlık CPU/GPU/NVMe SSD/PSU sıcaklıklarını (°C) ve Sol/Sağ fan devirlerini (RPM) döndürür."""
@@ -237,10 +238,11 @@ class ThermalFanController:
             return False
 
     def tick(self, rendering=False, thermal_state=0):
-        """Her döngüde CPU/GPU ve NVMe SSD sıcaklığını denetler; ısınma varsa anında korumaya geçer."""
+        """Her döngüde CPU/GPU ve NVMe SSD sıcaklığını denetler; ısınmada anında korur, soğumada histerezis uygular."""
         t = self.telemetry()
         peak = t.get("peak_c")
         ssd_c = t.get("ssd_c")
+        now = time.time()
 
         # 1. Donanım ömrü & güvenlik önceliği: yüksek sıcaklık veya NVMe ısınmasında anında soğutma
         if (
@@ -260,9 +262,12 @@ class ThermalFanController:
         ):
             desired = "auto"
         elif peak <= TEMP_SILENT_MAX_C:
-            desired = "silent"
+            if self.applied_state in ("auto", "boost") and (now - self.last_adjust) < COOL_DOWN_HOLD_S:
+                desired = self.applied_state
+            else:
+                desired = "silent"
         else:
-            # 50°C - 52°C arası histerezis bölgesi: mevcut durumu koru
+            # 48.5°C - 52°C arası histerezis bölgesi: mevcut durumu koru
             desired = self.applied_state if self.applied_state in ("silent", "auto") else "auto"
 
         if desired != self.applied_state:
@@ -276,7 +281,7 @@ class ThermalFanController:
                 self.applied_state = desired
             else:
                 self.applied_state = desired
-            self.last_adjust = time.time()
+            self.last_adjust = now
         return t
 
     def set_mode(self, mode):
@@ -284,7 +289,8 @@ class ThermalFanController:
         m = mode.lower().strip()
         if m in ("sessiz", "silent", "quiet", "düşük", "dusuk"):
             self.user_mode = "auto_silent"
-            self.applied_state = "unknown"
+            if self.applied_state not in ("silent", "auto"):
+                self.applied_state = "unknown"
             t = self.tick(rendering=False)
             return (
                 f"Akıllı Sessiz Fan kipi etkin. Sıcaklık 52°C altında olduğu sürece fanlar güvenli alt sınır "

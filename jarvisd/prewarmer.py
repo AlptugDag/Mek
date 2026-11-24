@@ -66,6 +66,8 @@ HOT_FRAMEWORK_PREFIXES = (
 PLUGIN_ROOTS = (
     "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore",
     "/Library/OFX/Plugins",
+    "/Library/Application Support/BSKL/AI MACHINE/Server",
+    "/Library/Application Support/BSKL/AI MACHINE/Plugins",
     "/Library/Application Support/Adobe/CEP/extensions",
     os.path.expanduser("~/Library/Application Support/Adobe/CEP/extensions"),
     "/Library/Audio/Plug-Ins/VST3",
@@ -153,6 +155,21 @@ def warm_app_bundle(app_path, budget_bytes=450 * 1024 * 1024):
                 if warmed >= budget_bytes:
                     return warmed
 
+    # 2.5 DaVinci Resolve Neural Engine & AI Kütüphaneleri (Contents/Libraries: LibTorch, ONNX Runtime, GGML Metal, FAISS, Fairlight)
+    libs_dir = os.path.join(contents, "Libraries")
+    if os.path.isdir(libs_dir):
+        neural_lib_prefixes = ("libtorch", "libonnxruntime", "libggml", "libfaiss", "libFairlightPage", "libopencv_ml")
+        try:
+            for entry in sorted(os.listdir(libs_dir)):
+                if entry.startswith(neural_lib_prefixes) and entry.endswith(".dylib"):
+                    p = os.path.join(libs_dir, entry)
+                    if os.path.isfile(p):
+                        warmed += advise_file(p, max_bytes=128 * 1024 * 1024)
+                        if warmed >= budget_bytes:
+                            return warmed
+        except OSError:
+            pass
+
     # 3. Uygulama içi yerleşik temel eklentiler (Importer/Exporter/GPU hızlandırıcılar)
     common_plugins = os.path.join(contents, "Plug-Ins", "Common")
     if os.path.isdir(common_plugins):
@@ -195,7 +212,11 @@ def warm_plugins_and_caches(home=HOME, plugin_roots=PLUGIN_ROOTS, budget_bytes=7
             continue
         for dp, _, fn in os.walk(root):
             for f in fn:
-                if f in ("Info.plist", "PkgInfo", "manifest.xml") or "/Contents/MacOS" in dp or f.endswith((".jsx", ".js", ".html")):
+                if (
+                    f in ("Info.plist", "PkgInfo", "manifest.xml")
+                    or "/Contents/MacOS" in dp
+                    or f.endswith((".jsx", ".js", ".html", ".so", ".dylib", ".onnx", ".mlmodel", ".safetensors"))
+                ):
                     p = os.path.join(dp, f)
                     if os.path.isfile(p):
                         b = advise_file(p, max_bytes=12 * 1024 * 1024)

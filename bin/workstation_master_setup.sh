@@ -26,13 +26,23 @@ if ! pgrep -f "Contents/MacOS/Resolve" > /dev/null 2>&1; then
             "$RESOLVE_PREF_DIR/config.user.xml" 2>/dev/null
     fi
     if [ -f "$RESOLVE_PREF_DIR/config.dat" ]; then
+        # Buffers.1 / Memory dinamik olarak Mek (memory_budget.py) tarafından yönetilir; sabit değerle ezilmez
         sed -i '' \
             -e 's|^Bg.Tasks.EnableBgTranscription = .*|Bg.Tasks.EnableBgTranscription = 0|g' \
+            -e 's|^Bg.Tasks.EnableBackgroundRenders = .*|Bg.Tasks.EnableBackgroundRenders = 0|g' \
+            -e 's|^Bg.Tasks.PauseBGRenderOnFGActivity = .*|Bg.Tasks.PauseBGRenderOnFGActivity = 1|g' \
+            -e 's|^Local.MPSGraph.Enable = .*|Local.MPSGraph.Enable = 1|g' \
+            -e 's|^Local.Resource.ResolveMemoryPercentage = .*|Local.Resource.ResolveMemoryPercentage = 85|g' \
+            -e 's|^Local.Resource.FusionMemoryPercentage = .*|Local.Resource.FusionMemoryPercentage = 15|g' \
             "$RESOLVE_PREF_DIR/config.dat" 2>/dev/null
     fi
     if [ -f "$RESOLVE_PREF_DIR/.config.data" ]; then
         sed -i '' \
             -e 's|^Bg.Tasks.EnableBgTranscription = .*|Bg.Tasks.EnableBgTranscription = 0|g' \
+            -e 's|^Bg.Tasks.EnableBackgroundRenders = .*|Bg.Tasks.EnableBackgroundRenders = 0|g' \
+            -e 's|^Bg.Tasks.PauseBGRenderOnFGActivity = .*|Bg.Tasks.PauseBGRenderOnFGActivity = 1|g' \
+            -e 's|^ResolveMemoryUsageInPercentage = .*|ResolveMemoryUsageInPercentage = 85|g' \
+            -e 's|^FusionMemoryUsageInPercentage = .*|FusionMemoryUsageInPercentage = 15|g' \
             "$RESOLVE_PREF_DIR/.config.data" 2>/dev/null
     fi
 fi
@@ -42,6 +52,7 @@ fi
 if ! pgrep -f "Contents/MacOS/Topaz Video" > /dev/null 2>&1; then
     defaults write "com.topazlabs.Topaz Video" gpuDeviceID -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" hardwareDecodingEnabled -int 1 2>/dev/null
+    defaults write "com.topazlabs.Topaz Video" maxProcesses -int 1 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" powerSaverMode -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" liveExportEnabled -int 0 2>/dev/null
     defaults write "com.topazlabs.Topaz Video" exportWithLivePreviewEnabled -int 0 2>/dev/null
@@ -59,10 +70,15 @@ BIDS=(
     "com.adobe.Audition"
     "com.topazlabs.Topaz-Video"
     "com.topazlabs.Topaz Video"
+    "com.topazlabs.Topaz Photo"
+    "com.topazlabs.TopazPhoto"
+    "UVR"
     "com.redgiant.service"
     "net.maxon.app-manager"
     "com.borisfx.bfxdhelper"
     "com.fxfactory.FxFactory"
+    "org.blenderfoundation.blender"
+    "com.google.antigravity"
 )
 
 for plist in "$HOME/Library/Preferences"/com.adobe.PremierePro*.plist \
@@ -118,6 +134,9 @@ for dir in \
     "$HOME/Library/Application Support/Topaz Labs LLC/Topaz Video" \
     "$HOME/Library/Application Support/Topaz Labs LLC/Topaz Video/models" \
     "$HOME/Library/Application Support/Topaz Labs LLC/Topaz Video/logs" \
+    "$HOME/Library/Application Support/Topaz Labs LLC/Topaz Photo" \
+    "$HOME/.ollama" \
+    "$HOME/.huggingface" \
     "$HOME/.cache" \
     "$HOME/.npm" \
     "$HOME/Library/Logs" \

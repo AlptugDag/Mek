@@ -31,24 +31,43 @@ ADOBE_DEBUG_DB_OVERRIDES = {
     "GF.DisableMemoryPooling": "true",
     "GF.UseMetalHeap": "false",
     "GF.Metal": "true",
+    "GF.ForceCPU": "false",
+    "GF.Lockless": "true",
     "GF.EnableZeroCopy": "true",
     "Afterburner.EnableZeroCopy": "false",
     "Lumetri.Metal": "true",
     "EnableGPUDebayer": "true",
+    "ImmersiveVideo.UseMetal": "true",
     "GF.Metal.EnableFlushlessEvent": "true",
     "GF.Metal.Catalina16BitWorkaround": "false",
     "GF.DisableAcceleratedRenderer": "false",
     "GF.DisableAcceleratedDisplay": "false",
     "GF.DisableGPUFrameCache": "false",
+    "GF.MaxTextureMemPercentage": "80",
+    "ExecuteKernel Async": "true",
+    "DisplaySurface.PresentAsync": "true",
+    "DS.UseGPUSync": "false",
     # M1 Max Çift Medya Motoru için Dengeli Decode, Scrubbing ve Asenkron Kare Kuyrukları:
     "CodecSupport.MCDecoderPoolSize": "6",
     "MediaCoreAsyncFrameCount3": "16",
     "PlayerMain.MaxOutstandingPendingAheadOfPlayback": "16",
+    "LowLevel Timecode hardware queue depth": "16",
+    "Async Read Buffer Allocation Size": "16777216",
     "DecodeQueue.IOThreadsPerQueue": "8",
+    "ImporterMPEG.UseAsyncDecode": "true",
+    "Multiple Decodes Experimental": "true",
+    "UseAsyncExport": "true",
     "GF.DeviceAssetCachePercent": "20",
     "GF.DeviceSoftPoolFactor": "50",
     "GF.HostPoolFactor": "10",
     "DVACompute.ShouldUseObjectSelectionAsync": "true",
+    # CoreML ve ONNX Runtime AI Efektlerini 1. Nesil Yavaş ANE Yerine 32-Core Metal GPU'da Çalıştır:
+    "dvaml.CoreML.ComputeUnitOverride": "1",
+    "dvaml.CoreML.AllowLowPrecisionAccumulationOnGPU": "true",
+    "dvaml.EnableORTGPUBufferDispatch": "true",
+    "dvaml.OverwriteORTThreadPool": "8",
+    "dvaai.UseGPU": "true",
+    "dvaaccelerate.UseMetal": "true",
     # Uygulama Açılışı ve Eklenti/Ses Tarama Hızlandırıcıları:
     "ML.UseKnownPluginsCache": "true",
     "ML.LoadTestingPluginsAtStartup": "false",
@@ -98,6 +117,7 @@ RESOLVE_USER_XML_OVERRIDES = {
 TOPAZ_DEFAULTS_OVERRIDES = {
     "gpuDeviceID": 0,
     "hardwareDecodingEnabled": 1,
+    "maxProcesses": 1,
     "powerSaverMode": 0,
     "liveExportEnabled": 0,
     "exportWithLivePreviewEnabled": 0,
@@ -109,11 +129,16 @@ TOPAZ_DEFAULTS_OVERRIDES = {
 def _running_adobe_families():
     """Şu anda açık olan kurgu uygulama ailelerini döndürür (açık uygulamanın dosyasına dokunulmaz)."""
     open_fams = set()
+    _ignore_helpers = ("crashpad_handler", "resolvepython", "logtransport", "adobe crash processor")
     for p in psutil.process_iter(["name", "exe"]):
         try:
-            target = f"{p.info.get('name') or ''} {p.info.get('exe') or ''}".lower()
+            name = (p.info.get("name") or "").lower()
+            exe = (p.info.get("exe") or "").lower()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
+        if any(h in name or h in exe for h in _ignore_helpers):
+            continue
+        target = f"{name} {exe}"
         if "premiere" in target or "pproheadless" in target:
             open_fams.add("premiere")
         if "after effects" in target or "aerender" in target:
@@ -124,9 +149,9 @@ def _running_adobe_families():
             open_fams.add("audition")
         if "photoshop" in target:
             open_fams.add("photoshop")
-        if "davinci" in target or "/resolve" in target:
+        if "/contents/macos/resolve" in exe or name in ("resolve", "davinci resolve"):
             open_fams.add("resolve")
-        if "topaz video" in target or "topaz" in target and "veai" in target:
+        if "topaz video" in target or ("topaz" in target and "veai" in target):
             open_fams.add("topaz")
     return open_fams
 
@@ -289,8 +314,8 @@ def tune_after_effects_prefs_file(path):
         (r'("Enable Concurrent Frame Renders"\s*=\s*)00', r"\g<1>01"),
         (r'("Log BEE Commands Into AdobePIP"\s*=\s*)01', r"\g<1>00"),
         (r'("Enable Multiprocessing"\s*=\s*)"0"', r'\g<1>"1"'),
-        # 10 çekirdekli M1 Max'te arayüz donmadan en yüksek MFR verimi (%10 rezerv):
-        (r'("Reserved CPU Power"\s*=\s*)"(?:0|2[5-9]|[3-9]\d)"', r'\g<1>"10"'),
+        # 10 çekirdekli M1 Max'te arayüz/WindowServer/CoreAudio ve paralel kurgu uygulamaları donmadan en yüksek MFR verimi (%20 = 2 çekirdek UI rezervi):
+        (r'("Reserved CPU Power"\s*=\s*)"(?:0|10|2[5-9]|[3-9]\d)"', r'\g<1>"20"'),
     )
     for pattern, repl in replacements:
         new_text, count = re.subn(pattern, repl, updated)
@@ -329,22 +354,48 @@ def tune_resolve_prefs(home=HOME):
         except OSError:
             pass
 
-    for cfg_name in ("config.dat", ".config.data"):
+    resolve_cfg_rules = {
+        "config.dat": {
+            "Bg.Tasks.EnableBgTranscription": "0",
+            "Bg.Tasks.EnableBackgroundRenders": "0",
+            "Bg.Tasks.PauseBGRenderOnFGActivity": "1",
+            # Local.DNE.Mode kullanıcının Resolve arayüzünden seçtiği (ör. GPU / Auto) değerde bırakılır
+            "Local.MPSGraph.Enable": "1",
+            "Local.Resource.ResolveMemoryPercentage": "85",
+            "Local.Resource.FusionMemoryPercentage": "15",
+            # Buffers.1: memory_budget.py dinamik yönetir (sabit 47349 onunla çakışıyordu)
+        },
+        ".config.data": {
+            "Bg.Tasks.EnableBgTranscription": "0",
+            "Bg.Tasks.EnableBackgroundRenders": "0",
+            "Bg.Tasks.PauseBGRenderOnFGActivity": "1",
+            # DaVinciNeuralEngine kullanıcının Resolve arayüzünden seçtiği değerde bırakılır
+            "ResolveMemoryUsageInPercentage": "85",
+            "FusionMemoryUsageInPercentage": "15",
+            # Memory: memory_budget.py dinamik yönetir
+        },
+    }
+    for cfg_name, rules in resolve_cfg_rules.items():
         cfg_path = os.path.join(pref_dir, cfg_name)
         if not os.path.isfile(cfg_path):
             continue
         try:
             with open(cfg_path, "r", encoding="latin-1", newline="") as f:
                 raw = f.read()
-            new_text, count = re.subn(
-                r"^(Bg\.Tasks\.EnableBgTranscription\s*=\s*)(?!0\b).+$",
-                r"\g<1>0",
-                raw,
-                flags=re.M,
-            )
-            if count and new_text != raw:
+            new_text = raw
+            file_changes = 0
+            for k, v in rules.items():
+                pat = re.compile(rf"^{re.escape(k)}[ \t]*=[ \t]*(.*)$", flags=re.M)
+                def _repl(m, key=k, val=v):
+                    nonlocal file_changes
+                    if m.group(1).strip() == val and m.group(0) == f"{key} = {val}":
+                        return m.group(0)
+                    file_changes += 1
+                    return f"{key} = {val}"
+                new_text = pat.sub(_repl, new_text)
+            if file_changes and new_text != raw:
                 _atomic_write(cfg_path, new_text, encoding="latin-1")
-                changes += count
+                changes += file_changes
         except OSError:
             pass
     return changes
@@ -426,9 +477,22 @@ def tune_all(home=HOME, apps_dir="/Applications", open_families=None):
             if tune_after_effects_prefs_file(ae_path) > 0:
                 summary["ae_files"] += 1
 
-    # 4. DaVinci Resolve tercihleri
+    # 4. DaVinci Resolve tercihleri + BorisFX Continuum OFX 4K GPU tamponu
     if "resolve" not in open_families:
         summary["resolve_keys"] = tune_resolve_prefs(home=home)
+        for bcc_xml in glob.glob(os.path.join(home, "Library", "Preferences", "com.borisfx.Continuum*.filter.ofx.xml")):
+            try:
+                raw_bcc = open(bcc_xml, "r", encoding="utf-8", errors="ignore", newline="").read()
+                new_bcc, n_bcc = re.subn(
+                    r'(Pref_Name="Use 4k Gpu Buffers"[^>]*Pref_Value=")0(")',
+                    r"\g<1>1\g<2>",
+                    raw_bcc,
+                )
+                if n_bcc and new_bcc != raw_bcc:
+                    _atomic_write(bcc_xml, new_bcc)
+                    summary["resolve_keys"] += n_bcc
+            except OSError:
+                pass
 
     # 5. Topaz Video tercihleri (yalnızca gerçek sistem dizininde çalışırken)
     if home == HOME and "topaz" not in open_families:

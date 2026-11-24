@@ -14,6 +14,19 @@ ADBLOCK_URL=https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
 HPM_STATE=/var/db/mek-highpowermode
 UPS_SHUTDOWN_STATE=/var/db/mek-ups-shutdown
 
+# Apple M1 Max 64 GB Birleşik Bellek — Metal GPU & Neural Engine XNU çekirdek parametreleri
+# 56 GB (57344 MB) Metal wired üst sınırı + 50 GB (51200 MB) alt su işareti (8 GB XNU + WindowServer için korunur)
+apply_neural_kernel_tuning() {
+  /bin/launchctl limit maxfiles 65536 524288 2>/dev/null || true
+  /usr/sbin/sysctl -w iogpu.wired_limit_mb=57344 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w iogpu.wired_lwm_mb=51200 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w kern.ipc.somaxconn=4096 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w kern.sysv.shmmax=536870912 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w kern.sysv.shmall=32768 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w kern.sysv.shmseg=64 >/dev/null 2>&1 || true
+  /usr/sbin/sysctl -w kern.sysv.shmmni=128 >/dev/null 2>&1 || true
+}
+
 enable_high_power() {
   ac_mode=$(/usr/bin/pmset -g custom | /usr/bin/awk '/^AC Power:/ { ac=1; next } /^Battery Power:/ { ac=0 }
     ac && $1 == "highpowermode" { print $2; exit }')
@@ -136,11 +149,18 @@ software_update_install() {
 }
 
 case "$1" in
+  neural-tune)
+    apply_neural_kernel_tuning
+    true;;
   perf)
     /usr/bin/pmset -a powernap 0 disksleep 0 standby 0
+    apply_neural_kernel_tuning
+    /usr/sbin/sysctl -w debug.lowpri_throttle_enabled=0 >/dev/null 2>&1 || true
     for d in $DAEMONS; do [ -f "$d" ] && /bin/launchctl bootout system "$d" 2>/dev/null; done; true;;
   normal)
-    /usr/bin/pmset -a powernap 0 disksleep 10 standby 1
+    /usr/bin/pmset -a powernap 0 disksleep 10 standby 0
+    /usr/sbin/sysctl -w debug.lowpri_throttle_enabled=1 >/dev/null 2>&1 || true
+    apply_neural_kernel_tuning
     restore_high_power
     for d in $DAEMONS; do [ -f "$d" ] && /bin/launchctl bootstrap system "$d" 2>/dev/null; done; true;;
   fan-silent|fan-auto|fan-boost)
@@ -199,7 +219,12 @@ PY
     old /private/var/log 7
     old /private/var/db/diagnostics/Persist 14
     old /private/var/tmp 3
-    for t in /private/var/folders/*/*/T; do old "$t" 3; done
+    # MPSGraph / Metal / CoreML / ANE / DaVinci / OFX derlenmiş neural shader önbelleklerini ASLA silme!
+    for t in /private/var/folders/*/*/T; do
+      [ -d "$t" ] && /usr/bin/find "$t" -mindepth 1 -xdev \
+        \( -name "com.apple.MetalPerformanceShadersGraph*" -o -name "com.apple.metal*" -o -name "com.apple.e5rt*" -o -name "com.apple.ane*" -o -name "com.blackmagic-design.*" -o -name "com.borisfx.*" -o -name "com.dehancer.*" -o -name "com.topazlabs.*" \) -prune \
+        -o -type f -mtime +3 -delete 2>/dev/null || true
+    done
     old /Library/Updates 30
     /usr/sbin/periodic daily weekly monthly >/dev/null 2>&1
     # Disk kritik dolulukta: Time Machine yerel anlık görüntülerini incelt (yedekler diskte kalır)
@@ -241,4 +266,63 @@ H
 chown root:wheel /usr/local/libexec/mek-priv; chmod 755 /usr/local/libexec/mek-priv
 echo "$USER_NAME ALL=(root) NOPASSWD: /usr/local/libexec/mek-priv" > /etc/sudoers.d/mek
 chmod 440 /etc/sudoers.d/mek
-visudo -cf /etc/sudoers.d/mek && echo "Kuruldu."
+visudo -cf /etc/sudoers.d/mek
+
+# Kalıcı açılış çekirdek ayarlayıcısı (XNU Metal/Neural bellek + maxfiles + socket kuyruğu)
+cat > /Library/LaunchDaemons/com.alptug.neural-kernel-tuning.plist <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.alptug.neural-kernel-tuning</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/libexec/mek-priv</string>
+    <string>neural-tune</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+</dict>
+</plist>
+PLIST
+chown root:wheel /Library/LaunchDaemons/com.alptug.neural-kernel-tuning.plist
+chmod 644 /Library/LaunchDaemons/com.alptug.neural-kernel-tuning.plist
+
+# Önceki güncelleme sonrası geri gelen gereksiz arka plan güncelleyicilerini ve kullanılmayan
+# Logitech webcam/eski Options ajanlarını geri alınabilir biçimde devre dışı bırak
+# (Red Giant, Maxon, BorisFX, Elgato Camera Hub, Logi Options+ ve Adobe lisans servislerine DOKUNULMAZ)
+for bloat_plist in \
+  /Library/LaunchDaemons/com.adobe.ARMDC.Communicator.plist \
+  /Library/LaunchDaemons/com.adobe.ARMDC.SMJobBlessHelper.plist \
+  /Library/LaunchDaemons/com.teamviewer.Helper.plist \
+  /Library/LaunchDaemons/com.teamviewer.UninstallerHelper.plist \
+  /Library/LaunchDaemons/com.teamviewer.UninstallerWatcher.plist; do
+  if [ -f "$bloat_plist" ]; then
+    lbl=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$bloat_plist" 2>/dev/null || true)
+    /bin/launchctl bootout system "$bloat_plist" 2>/dev/null || true
+    [ -n "$lbl" ] && /bin/launchctl disable "system/$lbl" 2>/dev/null || true
+  fi
+done
+USER_UID=$(/usr/bin/id -u "$USER_NAME" 2>/dev/null || true)
+for agent_plist in \
+  /Library/LaunchAgents/com.logitech.LogiRightSight.Agent.plist \
+  /Library/LaunchAgents/com.logitech.manager.daemon.plist; do
+  if [ -f "$agent_plist" ] && [ -n "$USER_UID" ]; then
+    lbl=$(/usr/libexec/PlistBuddy -c 'Print :Label' "$agent_plist" 2>/dev/null || true)
+    /bin/launchctl bootout "gui/$USER_UID" "$agent_plist" 2>/dev/null || true
+    [ -n "$lbl" ] && /bin/launchctl disable "gui/$USER_UID/$lbl" 2>/dev/null || true
+  fi
+done
+
+# Hemen etkinleştir ve doğrula
+/bin/launchctl bootout system /Library/LaunchDaemons/com.alptug.neural-kernel-tuning.plist 2>/dev/null || true
+/bin/launchctl bootstrap system /Library/LaunchDaemons/com.alptug.neural-kernel-tuning.plist 2>/dev/null || true
+/usr/local/libexec/mek-priv neural-tune
+/usr/bin/pmset -a powernap 0 standby 0 2>/dev/null || true
+
+echo ""
+echo "=== KÖK DÜZEYİ NEURAL / XNU DOĞRULAMA ==="
+sysctl iogpu.wired_limit_mb iogpu.wired_lwm_mb kern.ipc.somaxconn debug.lowpri_throttle_enabled
+launchctl limit maxfiles
+echo "Kuruldu ve etkinleştirildi."

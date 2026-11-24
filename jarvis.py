@@ -454,19 +454,26 @@ def speak(text: str, force: bool = False):
     text = normalize_phonetics(text)
     print(f"[Mek] Sentezleniyor: {text}")
     try:
+        import glob as _glob
         hub_cache = os.path.expanduser("~/.cache/huggingface/hub")
-        if os.path.isdir(hub_cache):
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        ema_cached = bool(_glob.glob(os.path.join(hub_cache, "models--*ema*")))
+        if ema_cached:
             os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+        else:
+            # huggingface_hub.constants.HF_HUB_OFFLINE import anında okunur; model henüz önbellekte yoksa çevrimiçi izin ver
+            os.environ.pop("HF_HUB_OFFLINE", None)
         from ema_lightning import EMA
         try:
             tts = EMA()
         except Exception:
-            if os.environ.get("HF_HUB_OFFLINE") == "1":
-                os.environ.pop("HF_HUB_OFFLINE", None)
-                tts = EMA()
-            else:
-                raise
+            os.environ.pop("HF_HUB_OFFLINE", None)
+            try:
+                import huggingface_hub.constants as _hfc
+                _hfc.HF_HUB_OFFLINE = False
+            except Exception:
+                pass
+            tts = EMA()
         speech = tts.say(text, speed=SPEECH_SPEED)
 
         # Akustik ekolayzır Mac Studio hoparlörüne özeldir; başka bir çıkış
@@ -529,8 +536,14 @@ def speak(text: str, force: bool = False):
         print("[Mek] Oynatma başarıyla tamamlandı.")
         return True
     except Exception as e:
-        print(f"[Mek] Hata: {e}", file=sys.stderr)
-        return False
+        # Çevrimdışı veya model yükleme hatasında macOS yerleşik Türkçe Yelda sesine kesintisiz yedeklen
+        try:
+            subprocess.run(["/usr/bin/say", "-v", "Yelda", "-r", "195", text], check=True, timeout=45)
+            print("[Mek] Yerleşik macOS Yelda sesiyle çalındı (yedek kip).")
+            return True
+        except Exception:
+            print(f"[Mek] Hata: {e}", file=sys.stderr)
+            return False
 
 
 def main():

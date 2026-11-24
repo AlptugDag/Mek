@@ -69,7 +69,7 @@ CREATIVE_IPC_RE = re.compile(
     r"ACCFinderSync|Red Giant|Maxon|mxnotify|mxredirect|Magic Bullet|Trapcode|"
     r"BorisFX|bfxdhelper|rlmserver|Sapphire|Continuum|Mocha|FxFactory|Dehancer|Laforge|"
     r"Captioneer|AtomX|BeatEdit|PSEPremierePanel|FilmConvert|fusionscript|DPDecoder|"
-    r"Fairlight|neuroserver|veai|logioptionsplus|Camera Hub",
+    r"Fairlight|neuroserver|veai|AI MACHINE|BSKL|logioptionsplus|Camera Hub",
     re.I,
 )
 CREATIVE_PROTECT_RE = re.compile(
@@ -81,9 +81,17 @@ CREATIVE_PROTECT_RE = re.compile(
 # Not: WallpaperMacintoshExtension koşulsuz öldürülürse macOS 27'de WallpaperAgent %110+ CPU döngüsüne girer;
 # bu yüzden öldürmek yerine E-çekirdeklere sabitlenir, yalnızca CPU kaçarsa yeniden başlatılır.
 BG_CLAMP = re.compile(
-    r"spotlightknowledged|mds_stores|photoanalysisd|mediaanalysisd|"
-    r"IntelligencePlatformComputeService|SetStoreUpdateService|"
+    r"spotlightknowledged|mds_stores|corespotlightd|photoanalysisd|mediaanalysisd|"
+    r"textunderstandingd|assistant_service|IntelligencePlatformComputeService|SetStoreUpdateService|"
     r"WallpaperAgent|WallpaperMacintoshExtension|WallpaperVideoExtension"
+)
+
+# Aktif yerel neural / AI motorları (P-çekirdek + Tier-0 G/Ç önceliği ve 72°C termal ön-soğutma koruması):
+NEURAL_COMPUTE_RE = re.compile(
+    r"(?:^|/)(?:ollama|ollama_llama_server|llama-server|llama-cli|llama-bench|whisper-cli|whisper-server|mlx_lm|sd-cli)(?:\b|$)|"
+    r"Ultimate Vocal Remover|Topaz Photo|neuroserver|AI MACHINE|BSKL/AI MACHINE|"
+    r"sam3_masks|scene_3d_text|scene_replace|spatial_captions|brain_server|mlx_whisper|demucs|hyperframes|remotion|givemotion",
+    re.I,
 )
 
 # Yalnızca kurgu ve eklenti ekosisteminin DIŞINDA kalan bulut/güncelleyici/telemetri süreçleri:
@@ -100,13 +108,19 @@ ADOBE_MAIN_RE = re.compile(
     r"Adobe Media Encoder[^/]*|Adobe Photoshop[^/]*|Photoshop[^/]*|Adobe Audition[^/]*|"
     r"Adobe Illustrator[^/]*|Adobe Lightroom[^/]*)"
 )
+RESOLVE_MAIN_RE = re.compile(r"Contents/MacOS/(?:DaVinci )?Resolve$")
+ADOBE_ORPHAN_HELPERS_RE = re.compile(
+    r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|Adobe Crash Processor|CRLogTransport|LogTransport2"
+)
+SHARED_AI_PLUGIN_HELPERS_RE = re.compile(r"AI MACHINE Server|BSKL/AI MACHINE/Server")
 ORPHAN_HELPERS_RE = re.compile(
     r"CEPHtmlEngine|dynamiclinkmanager|AdobeQTServer|AI MACHINE Server|Adobe Crash Processor|CRLogTransport|LogTransport2"
 )
 
 # Arka planda gerçek render/dışa aktarma motorları (yıldan/sürümden bağımsız)
 RENDER_ENGINE_RE = re.compile(
-    r"PProHeadless|Adobe Media Encoder|aerender|AEGPUSniffer|Topaz[^/]*.*/(ffmpeg|neuroserver)|Compressor"
+    r"PProHeadless|Adobe Media Encoder|aerender|AEGPUSniffer|Topaz[^/]*.*/(ffmpeg|neuroserver)|Compressor|"
+    r"Contents/MacOS/Blender|(?:^|/)(?:ffmpeg|sd-cli)(?:\s|$)|hyperframes|remotion|givemotion|scene_3d_text|scene_replace|spatial_captions"
 )
 
 _PLUGIN_DIRS = (
@@ -263,6 +277,7 @@ class ServiceManager:
         self.thermal_fan = ThermalFanController()
         if _supports_highpowermode():
             priv("restore-high-power")
+        priv("neural-tune")
         self._ensure_plugin_services()
         _run(["/bin/launchctl", "limit", "maxfiles", "65536", "200000"])
         if os.access(MASTER_SETUP, os.X_OK):
@@ -362,6 +377,20 @@ class ServiceManager:
             log.info("Arka planda boşta bekleyen ikincil kurgu süreci Tier-3 kademesine alındı: %s (pid=%d)",
                      name or "pro", pid)
 
+    def _coop_render_pro(self, pid, name=""):
+        """Kullanıcı önde başka bir kurgu uygulamasında aktif çalışırken (scrubbing/önizleme) arka planda
+        render yapan ikincil kurgu/render sürecini P-çekirdeklerde tutarak Tier-2 / nice 4 kademesine alır.
+        Böylece öndeki kurgu %100 takılmasız (60fps) akarken arka plan render'ı boş P-çekirdek döngülerinde
+        tam hız devam eder; kullanıcı 15 sn durduğunda tekrar Tier-0'a yükselir."""
+        if self.pro_tier.get(pid) != 2:
+            _run(["/usr/sbin/taskpolicy", "-B", "-t", "2", "-l", "2", "-p", str(pid)])
+            _renice_safe(pid, 4)
+            self.pro_tier[pid] = 2
+            self.boosted.discard(pid)
+            self.parked_pro.discard(pid)
+            log.info("İkincil arka plan render süreci işbirlikçi P-çekirdek (Tier-2) kipine alındı: %s (pid=%d)",
+                     name or "render", pid)
+
     def force_focus_mode(self, snap=None):
         """Performans modunu anında etkinleştirir: tüm aktif profesyonel/ağır süreçleri ve eklenti
         IPC'lerini Tier-0 P-çekirdeklere açar, arka plan gürültüsünü E-çekirdeklere sabitler."""
@@ -443,20 +472,26 @@ class ServiceManager:
         return True
 
     def cleanup_orphans(self, snap=None, force=False):
-        """Ana Adobe uygulamaları kapalıyken bellekte asılı kalan yetim yardımcı süreçleri temizler.
-        Herhangi bir Adobe ana uygulaması açıksa (force=True olsa dahi) yardımcı süreçlere dokunulmaz!"""
+        """Ana kurgu uygulamaları kapalıyken bellekte asılı kalan yetim yardımcı süreçleri temizler.
+        Adobe açıksa Adobe yardımcıları; Adobe VEYA DaVinci Resolve açıksa BSKL AI MACHINE Server korunur!"""
         procs = _iter_procs(snap)
         now = time.time()
         adobe_open = any(ADOBE_MAIN_RE.search(cmd or name or "") for _, name, cmd, _, _ in procs)
+        resolve_open = any(RESOLVE_MAIN_RE.search(cmd or "") for _, _name, cmd, _, _ in procs)
         if adobe_open:
             self.last_adobe_seen = now
+        if adobe_open and resolve_open:
             return 0
-        if not force and (now - self.last_adobe_seen < 30):
+        if not force and not resolve_open and (now - self.last_adobe_seen < 30):
             return 0
         killed = 0
         for pid, name, cmd, _, _ in procs:
             target = cmd or name or ""
-            if ORPHAN_HELPERS_RE.search(target) and not ADOBE_MAIN_RE.search(target):
+            if ADOBE_MAIN_RE.search(target) or RESOLVE_MAIN_RE.search(target):
+                continue
+            is_adobe_orphan = (not adobe_open) and (force or (now - self.last_adobe_seen >= 30)) and bool(ADOBE_ORPHAN_HELPERS_RE.search(target))
+            is_ai_orphan = (not adobe_open) and (not resolve_open) and (force or (now - self.last_adobe_seen >= 30)) and bool(SHARED_AI_PLUGIN_HELPERS_RE.search(target))
+            if is_adobe_orphan or is_ai_orphan:
                 try:
                     os.kill(pid, signal.SIGTERM)
                     killed += 1
@@ -489,8 +524,10 @@ class ServiceManager:
                 self._unpark_pro(ppid, snap)
             elif focused_is_pro:
                 is_rendering = (cpu >= RENDER_CPU) or bool(RENDER_ENGINE_RE.search(exe) and cpu >= 50.0)
-                if not is_rendering:
-                    # Yalnızca başka bir kurgu uygulaması öndeyse ikincil kurgu uygulamasını Tier-3'e al
+                if is_rendering:
+                    # Önde başka bir kurgu uygulaması kullanılırken arka plan render'ı P-çekirdekte Tier-2 işbirlikçi çalışır
+                    self._coop_render_pro(ppid, app_of(exe))
+                else:
                     self._park_pro(ppid, app_of(exe), secondary=True)
 
         if focused_is_pro:
@@ -535,6 +572,12 @@ class ServiceManager:
                         if pid not in self.unthrottled_ipc:
                             _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
                             _renice_safe(pid, 0)
+                    continue
+                if NEURAL_COMPUTE_RE.search(target) or is_llm_process(target):
+                    alive_ipc.add(pid)
+                    if pid not in self.unthrottled_ipc:
+                        _run(["/usr/sbin/taskpolicy", "-B", "-t", "0", "-l", "0", "-p", str(pid)])
+                        _renice_safe(pid, 0)
                     continue
                 if BG_CLAMP.search(target):
                     alive_bg.add(pid)
@@ -615,14 +658,31 @@ class ServiceManager:
                 swap_gb=float(getattr(snap, "swap_gb", 0.0) or 0.0),
                 running_exes=getattr(snap, "exes", None),
             )
-        self.thermal_fan.tick(rendering=rendering, thermal_state=getattr(snap, "thermal", 0))
+        neural_busy = any(
+            float(row[3] or 0.0) >= 25.0 and (NEURAL_COMPUTE_RE.search(row[2] or row[1] or "") or is_llm_process(row[2] or row[1] or ""))
+            for row in _iter_procs(snap)
+        )
+        self.thermal_fan.tick(rendering=(bool(rendering) or neural_busy), thermal_state=getattr(snap, "thermal", 0))
 
-        # Aktif (öndeki veya render yapan) kurgu süreçlerini ve alt eklenti ağacını Tier-0'a aç;
-        # yalnızca başka bir kurgu uygulaması aktifse boştaki ikincil kurgu süreçlerini Tier-3'e al!
+        # Aktif (öndeki veya render yapan) kurgu süreçlerini yönet:
+        # Kullanıcı önde bir kurgu uygulamasında aktif etkileşimdeyse (idle < 15 sn), öndeki uygulama mutlak Tier-0 alır;
+        # aynı anda arka planda render yapan diğer uygulama P-çekirdekte Tier-2 işbirlikçi çalışır (sıfır takılma!).
+        front_name = (getattr(snap, "front", "") or "").lower()
+        front_pid = getattr(snap, "front_pid", None)
+        user_interacting = float(getattr(snap, "idle", 0.0) or 0.0) < 15.0
+        front_pro_pids = {
+            pid for pid, exe, _c, _r in getattr(snap, "pro_procs", ())
+            if pid == front_pid or (front_name and (front_name in app_of(exe).lower() or app_of(exe).lower() in front_name))
+        }
         for pid, exe, cpu, _ in getattr(snap, "pro_procs", ()):
-            if pid in working_set:
+            if pid in front_pro_pids:
                 self._unpark_pro(pid, snap)
-            elif working_set:
+            elif pid in working_set:
+                if front_pro_pids and user_interacting:
+                    self._coop_render_pro(pid, app_of(exe))
+                else:
+                    self._unpark_pro(pid, snap)
+            elif working_set or front_pro_pids:
                 last_act = self.pro_last_active.get(pid, 0.0)
                 if now - last_act >= BG_PARK_DELAY_S:
                     self._park_pro(pid, app_of(exe), secondary=True)
